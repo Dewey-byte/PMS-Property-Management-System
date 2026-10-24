@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PMS · Property Management</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <a class="brand" href="#/dashboard"><span class="brand-mark">P</span><span>PMS</span></a>
+      <nav id="nav" aria-label="Main"></nav>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <h1 id="title">Dashboard</h1>
+        <div class="topbar-actions">
+          <input id="search" type="search" placeholder="Search…" aria-label="Search" hidden>
+          <button id="add" class="btn primary" type="button" hidden></button>
+        </div>
+      </header>
+      <div id="view" class="view"></div>
+    </main>
+  </div>
+
+  <dialog id="dialog"></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

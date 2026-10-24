@@ -1,0 +1,15 @@
+{
+  "name": "pms-property-management-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A simple web-based property management system: properties, units, tenants, leases, rent payments and maintenance.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node seed.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

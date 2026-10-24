@@ -1,0 +1,216 @@
+:root {
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --text: #1b2333;
+  --muted: #667085;
+  --border: #e3e7ee;
+  --primary: #2563eb;
+  --primary-text: #ffffff;
+  --sidebar: #0f172a;
+  --sidebar-text: #aeb8cc;
+  --sidebar-active: #1e293b;
+  --danger: #c0352b;
+  --green-bg: #dcf5e5; --green: #166c3b;
+  --amber-bg: #fdf0cf; --amber: #8a5a00;
+  --red-bg: #fde2e0; --red: #a3231b;
+  --blue-bg: #dce9ff; --blue: #1d4fb8;
+  --gray-bg: #eceff4; --gray: #4b566b;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%);
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1220;
+    --surface: #151c2f;
+    --text: #e6eaf3;
+    --muted: #94a0b8;
+    --border: #25304a;
+    --primary: #4c7dff;
+    --sidebar: #090d18;
+    --sidebar-active: #172037;
+    --danger: #ff7b70;
+    --green-bg: #12301f; --green: #7fdba0;
+    --amber-bg: #38290a; --amber: #f0c36a;
+    --red-bg: #3a1613; --red: #ff9b92;
+    --blue-bg: #13264d; --blue: #8fb4ff;
+    --gray-bg: #212b42; --gray: #aab4c8;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+h1, h2, h3 { margin: 0; line-height: 1.25; }
+a { color: var(--primary); }
+
+/* Layout ------------------------------------------------------------- */
+
+.app { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 100vh; }
+
+.sidebar {
+  background: var(--sidebar);
+  color: var(--sidebar-text);
+  padding: 20px 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 10px 20px;
+  color: #fff; font-weight: 700; font-size: 18px; text-decoration: none;
+}
+.brand-mark {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; border-radius: 8px;
+  background: var(--primary); color: #fff; font-size: 16px;
+}
+
+#nav { display: flex; flex-direction: column; gap: 2px; }
+#nav a {
+  padding: 9px 12px; border-radius: 8px;
+  color: var(--sidebar-text); text-decoration: none; font-weight: 500;
+}
+#nav a:hover { background: var(--sidebar-active); color: #fff; }
+#nav a[aria-current="page"] { background: var(--sidebar-active); color: #fff; box-shadow: inset 3px 0 0 var(--primary); }
+
+main { min-width: 0; padding: 24px 28px 48px; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 20px;
+}
+.topbar h1 { font-size: 22px; }
+.topbar-actions { display: flex; gap: 10px; align-items: center; }
+
+/* Controls ----------------------------------------------------------- */
+
+.btn {
+  font: inherit; font-weight: 600;
+  padding: 8px 14px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  cursor: pointer; white-space: nowrap;
+}
+.btn:hover { border-color: var(--muted); }
+.btn:disabled { opacity: .6; cursor: default; }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.small { padding: 4px 10px; font-size: 13px; font-weight: 500; }
+.btn.danger { color: var(--danger); }
+
+input, select, textarea {
+  font: inherit; color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; width: 100%;
+}
+input:focus, select:focus, textarea:focus, .btn:focus-visible {
+  outline: 2px solid var(--primary); outline-offset: 1px;
+}
+#search { width: 240px; }
+
+/* Cards, stats, tables ---------------------------------------------- */
+
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.card-head { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.card-head h2 { font-size: 15px; }
+.card-body { padding: 16px; }
+.empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.stat { padding: 16px; }
+.stat-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.stat-value { font-size: 26px; font-weight: 700; margin: 2px 0; }
+.stat-sub { color: var(--muted); font-size: 13px; }
+.stat progress { width: 100%; height: 6px; margin-top: 6px; accent-color: var(--primary); }
+
+.panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 14px; }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 10px 16px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+td.num, th.num { text-align: right; }
+td.actions { text-align: right; width: 1%; }
+/* Keep row actions reachable when a wide table scrolls sideways (not on phones, where they'd cover the data). */
+@media (min-width: 801px) {
+  td.actions, th:last-child:empty { position: sticky; right: 0; background: var(--surface); box-shadow: -8px 0 8px -8px rgb(0 0 0 / 25%); }
+}
+td.actions .btn + .btn { margin-left: 6px; }
+td.wrap { white-space: normal; min-width: 180px; }
+td strong { font-weight: 600; }
+.sub { color: var(--muted); font-size: 12px; }
+
+.badge {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600;
+}
+.badge.green { background: var(--green-bg); color: var(--green); }
+.badge.amber { background: var(--amber-bg); color: var(--amber); }
+.badge.red { background: var(--red-bg); color: var(--red); }
+.badge.blue { background: var(--blue-bg); color: var(--blue); }
+.badge.gray { background: var(--gray-bg); color: var(--gray); }
+
+/* Dialog form -------------------------------------------------------- */
+
+dialog {
+  width: min(560px, calc(100vw - 24px));
+  padding: 0; border: 0; border-radius: 12px;
+  background: var(--surface); color: var(--text);
+  box-shadow: 0 20px 50px rgb(0 0 0 / 30%);
+}
+dialog::backdrop { background: rgb(8 12 24 / 55%); }
+dialog form { display: flex; flex-direction: column; max-height: calc(100vh - 40px); }
+dialog h2 { padding: 18px 20px 4px; font-size: 18px; }
+.fields {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  padding: 14px 20px; overflow-y: auto;
+}
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field.wide { grid-column: 1 / -1; }
+.field > span { font-size: 13px; font-weight: 600; }
+textarea { resize: vertical; }
+.form-error { margin: 0 20px; padding: 8px 12px; border-radius: 8px; background: var(--red-bg); color: var(--red); }
+.form-error:empty { display: none; }
+.form-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px 18px; }
+
+/* Toast -------------------------------------------------------------- */
+
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px);
+  background: var(--text); color: var(--surface);
+  padding: 10px 16px; border-radius: 8px; font-weight: 500;
+  opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+  max-width: calc(100vw - 32px); z-index: 10;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.error { background: var(--danger); color: #fff; }
+
+/* Small screens ------------------------------------------------------ */
+
+@media (max-width: 800px) {
+  .app { grid-template-columns: minmax(0, 1fr); align-content: start; }
+  .sidebar { position: static; height: auto; padding: 12px; }
+  .brand { padding-bottom: 10px; }
+  #nav { flex-direction: row; overflow-x: auto; }
+  #nav a { white-space: nowrap; }
+  main { padding: 16px 16px 40px; }
+  #search { flex: 1; width: auto; min-width: 0; }
+  .topbar-actions { width: 100%; }
+  .panels { grid-template-columns: 1fr; }
+  .fields { grid-template-columns: 1fr; }
+}
