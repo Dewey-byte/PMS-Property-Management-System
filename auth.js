@@ -15,6 +15,25 @@ const MAX_TRACKED_ADDRESSES = 500;
 const USERNAME_RE = /^[A-Za-z0-9._-]{3,32}$/;
 const MIN_PASSWORD = 8;
 const MAX_PASSWORD = 128; // scrypt cost grows with input, so cap it
+const MAX_REGISTRATIONS = 5; // guest accounts one address may create...
+const REGISTRATION_WINDOW_MS = 60 * 60 * 1000; // ...per hour
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Accounts made before roles existed were all the hotel's own, so they are management.
+const roleOf = (user) => user.role ?? 'management';
+const publicUser = (user) => ({ username: user.username, role: roleOf(user), name: user.profile?.name ?? '' });
+
+function parseProfile(body) {
+  const text = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max + 1) : '');
+  const name = text(body.name, 100);
+  const email = text(body.email, 200);
+  const phone = text(body.phone, 40);
+  if (!name) throw new HttpError(400, 'Enter your name');
+  if (name.length > 100) throw new HttpError(400, 'Name must be at most 100 characters');
+  if (!EMAIL_RE.test(email) || email.length > 200) throw new HttpError(400, 'Enter a valid email address');
+  if (phone.length > 40) throw new HttpError(400, 'Phone must be at most 40 characters');
+  return { name, email, phone };
+}
 
 async function hashPassword(password) {
   const salt = crypto.randomBytes(16);
@@ -93,7 +112,9 @@ function parseCredentials(body, { strict }) {
 
 /**
  * Accounts are one stored document (kept apart from the property data):
- *   { users: [{ username, hash, createdAt, sessionVersion }], secret, failures: { address: { count, last, lockUntil } } }
+ *   { users: [{ username, hash, role, profile, createdAt, sessionVersion }], secret,
+ *     failures: { address: { count, last, lockUntil } }, registrations: { address: { count, first } } }
+ * `role` is 'management' (the account created on first run) or 'guest' (accounts guests create themselves).
  * `secret` signs session cookies. Signing out bumps the user's sessionVersion, which ends every session they have.
  * The document is read on each request, so any number of serverless instances can share it.
  */
@@ -106,6 +127,7 @@ function createAuth(storage) {
       users: Array.isArray(raw.users) ? raw.users : [],
       secret: typeof raw.secret === 'string' ? raw.secret : '',
       failures: raw.failures && typeof raw.failures === 'object' ? raw.failures : {},
+      registrations: raw.registrations && typeof raw.registrations === 'object' ? raw.registrations : {},
     };
   }
   const saveDoc = (doc) => storage.write('users', doc);
@@ -153,13 +175,31 @@ function createAuth(storage) {
     doc.failures[address] = entry;
   }
 
+  // Guests create their own accounts, so cap how many one address can make.
+  function assertCanRegister(doc, address) {
+    const entry = doc.registrations[address];
+    if (entry && Date.now() - entry.first < REGISTRATION_WINDOW_MS && entry.count >= MAX_REGISTRATIONS) {
+      throw new HttpError(429, 'Too many accounts were created from this address. Please try again later.');
+    }
+  }
+
+  function recordRegistration(doc, address) {
+    const now = Date.now();
+    for (const [key, e] of Object.entries(doc.registrations)) if (now - e.first >= REGISTRATION_WINDOW_MS) delete doc.registrations[key];
+    const oldestFirst = Object.entries(doc.registrations).sort((a, b) => a[1].first - b[1].first);
+    for (const [key] of oldestFirst.slice(0, Math.max(0, oldestFirst.length - MAX_TRACKED_ADDRESSES + 1))) delete doc.registrations[key];
+    const entry = doc.registrations[address] ?? { count: 0, first: now };
+    entry.count += 1;
+    doc.registrations[address] = entry;
+  }
+
   async function handle(req, res, action) {
     if (action === 'status' && req.method === 'GET') {
       const doc = await loadDoc();
       const user = verifySession(doc, req);
-      return sendJson(res, 200, { setupRequired: doc.users.length === 0, user: user ? { username: user.username } : null });
+      return sendJson(res, 200, { setupRequired: doc.users.length === 0, user: user ? publicUser(user) : null });
     }
-    if (!['setup', 'login', 'logout'].includes(action)) throw new HttpError(404, 'Not found');
+    if (!['setup', 'register', 'login', 'logout'].includes(action)) throw new HttpError(404, 'Not found');
     if (req.method !== 'POST') throw new HttpError(405, 'Method not allowed');
     assertSameOrigin(req);
 
@@ -174,19 +214,36 @@ function createAuth(storage) {
       return sendJson(res, 200, { ok: true }, { 'Set-Cookie': cookie(req, '', 0) });
     }
 
-    const { username, password } = parseCredentials(await readJson(req), { strict: action === 'setup' });
+    const body = await readJson(req);
+    const { username, password } = parseCredentials(body, { strict: action !== 'login' });
     const address = clientAddress(req);
 
     if (action === 'setup') {
-      // The very first account is created here; after that, setup is closed.
+      // The very first account is created here, and it is the management account; after that, setup is closed.
       return lock(async () => {
         const doc = await loadDoc();
         if (doc.users.length > 0) throw new HttpError(409, 'An account already exists. Please sign in.');
-        const user = { username, hash: await hashPassword(password), createdAt: new Date().toISOString(), sessionVersion: 0 };
+        const user = { username, hash: await hashPassword(password), role: 'management', createdAt: new Date().toISOString(), sessionVersion: 0 };
         doc.users.push(user);
         const setCookie = sessionCookie(req, doc, user);
         await saveDoc(doc);
-        return sendJson(res, 201, { user: { username } }, { 'Set-Cookie': setCookie });
+        return sendJson(res, 201, { user: publicUser(user) }, { 'Set-Cookie': setCookie });
+      });
+    }
+
+    if (action === 'register') {
+      const profile = parseProfile(body);
+      return lock(async () => {
+        const doc = await loadDoc();
+        if (doc.users.length === 0) throw new HttpError(409, 'The hotel has not been set up yet. The management account has to be created first.');
+        assertCanRegister(doc, address);
+        if (doc.users.some((u) => u.username.toLowerCase() === username.toLowerCase())) throw new HttpError(409, 'That username is already taken');
+        const user = { username, hash: await hashPassword(password), role: 'guest', profile, createdAt: new Date().toISOString(), sessionVersion: 0 };
+        doc.users.push(user);
+        recordRegistration(doc, address);
+        const setCookie = sessionCookie(req, doc, user);
+        await saveDoc(doc);
+        return sendJson(res, 201, { user: publicUser(user) }, { 'Set-Cookie': setCookie });
       });
     }
 
@@ -203,16 +260,17 @@ function createAuth(storage) {
       delete doc.failures[address];
       const setCookie = sessionCookie(req, doc, user);
       await saveDoc(doc);
-      return sendJson(res, 200, { user: { username: user.username } }, { 'Set-Cookie': setCookie });
+      return sendJson(res, 200, { user: publicUser(user) }, { 'Set-Cookie': setCookie });
     });
   }
 
+  // Returns the signed-in account: { username, role, name, email, phone }.
   async function requireUser(req) {
     // No cookie at all: refuse without touching the database.
     if (!readCookie(req, SESSION_COOKIE)) throw new HttpError(401, 'Please sign in');
     const user = verifySession(await loadDoc(), req);
     if (!user) throw new HttpError(401, 'Please sign in');
-    return user.username;
+    return { ...publicUser(user), email: user.profile?.email ?? '', phone: user.profile?.phone ?? '' };
   }
 
   return { handle, requireUser };

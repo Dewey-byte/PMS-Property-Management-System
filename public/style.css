@@ -482,6 +482,73 @@ td.actions { width: 1%; }
 .hint.total { padding: 10px 14px; border-radius: 12px; background: var(--row-hover); color: var(--text); font-size: 14px; }
 
 /* ==========================================================================
+   Two kinds of account: management extras and the guest pages
+   ========================================================================== */
+
+.tag {
+  display: inline-block; padding: 1px 8px; border-radius: 999px; vertical-align: middle;
+  background: var(--blue-bg); color: var(--blue); font-size: 11px; font-weight: 700;
+}
+.clamp { display: -webkit-box; max-width: 320px; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; }
+.reply-line { color: var(--green); }
+
+.attention { display: flex; align-items: center; gap: 14px; padding: 14px 18px; margin-bottom: 16px; border-left: 4px solid #f59e0b; }
+.attention-icon { display: grid; flex: none; place-items: center; width: 42px; height: 42px; border-radius: 12px; background: var(--grad-warm); color: #fff; }
+.attention-links { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 2px; }
+.attention-links a { font-weight: 650; }
+
+.nav-badge {
+  margin-left: auto; min-width: 20px; padding: 1px 7px; border-radius: 999px;
+  background: var(--grad-warm); color: #fff; font-size: 11px; font-style: normal; font-weight: 800; text-align: center;
+}
+#nav a[aria-current="page"] .nav-badge { background: rgb(255 255 255 / 28%); }
+
+.link-btn { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-weight: 650; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.auth-switch { margin-top: 14px; text-align: center; color: var(--muted); font-size: 13px; }
+
+.cal-item.pending { background: var(--grad-warm); }
+.dot.pending { background: var(--grad-warm); }
+
+.dialog-intro { padding: 6px 24px 0; }
+.quote-box { padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--row-hover); }
+.quote-box p { margin: 4px 0; white-space: pre-wrap; }
+.quote-box .total-line { font-weight: 700; }
+
+.section-title { margin: 22px 2px 12px; color: var(--muted); font-size: 15px; }
+
+.stay-search { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; gap: 14px; align-items: end; margin-bottom: 8px; padding: 18px; }
+.stay-error { margin: 0 0 8px; }
+.stay-error:empty { display: none; }
+.stay-summary { margin: 6px 2px 14px; color: var(--muted); font-weight: 600; }
+.stay-total { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 12px; background: var(--row-hover); font-size: 14px; }
+.room-card.sold-out { opacity: 0.6; }
+.room-card.sold-out:hover { transform: none; }
+
+.trip-list { display: grid; gap: 14px; }
+.trip, .message { display: grid; gap: 12px; padding: 18px 20px; }
+.trip-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.trip-head h3 { font-size: 17px; }
+.trip-note { margin: 0; padding: 8px 12px; border-radius: 12px; background: var(--amber-bg); color: var(--amber); font-weight: 600; }
+.trip-note.muted { background: var(--gray-bg); color: var(--gray); }
+.trip-money { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--row-hover); }
+.trip-money div { display: grid; }
+.trip-money strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.trip-actions { display: flex; justify-content: flex-end; }
+
+.service-head { display: flex; align-items: center; gap: 12px; padding: 16px 18px 0; }
+.service-head h3 { font-size: 17px; }
+.service-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--grad); color: #fff; }
+
+.message-text { margin: 0; white-space: pre-wrap; }
+.reply-box { padding: 12px 14px; border-left: 4px solid var(--green); border-radius: 14px; background: var(--green-bg); }
+.reply-box p { margin: 4px 0 0; white-space: pre-wrap; }
+
+@media (max-width: 860px) {
+  .stay-search { grid-template-columns: 1fr 1fr; }
+  .stay-search .btn { grid-column: 1 / -1; }
+}
+
+/* ==========================================================================
    Entrance animations (delays are staggered from JS)
    ========================================================================== */
 

@@ -61,7 +61,7 @@ test('first-run setup creates the account, signs in, and then closes', async () 
     const headers = cookieHeader(res);
     assert.equal((await fetch(`${base}/api/guests`, { headers })).status, 200);
     const status = await (await fetch(`${base}/api/auth/status`, { headers })).json();
-    assert.deepEqual(status, { setupRequired: false, user: { username: 'Alice' } });
+    assert.deepEqual(status, { setupRequired: false, user: { username: 'Alice', role: 'management', name: '' } });
 
     assert.equal((await post('setup', { username: 'mallory', password: 'another password' })).status, 409);
 

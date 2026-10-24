@@ -49,11 +49,11 @@ function fill(data) {
   const isabel = guest('Isabel Rossi', 'isabel.rossi@example.com', '555-0109');
   const jonas = guest('Jonas Berg', 'jonas.berg@example.com', '555-0110');
 
-  // booking(room, guest, first night offset from today, nights, status, adults, children, rate, notes)
-  const booking = (roomId, guestId, from, nights, status, adults = 2, children = 0, rate = null, notes = '') => {
+  // booking(room, guest, first night offset from today, nights, status, adults, children, rate, notes, extra)
+  const booking = (roomId, guestId, from, nights, status, adults = 2, children = 0, rate = null, notes = '', extra = {}) => {
     const rooms = data.rooms;
     const nightlyRate = rate ?? rooms.find((r) => r.id === roomId).rate;
-    return add('bookings', { roomId, guestId, checkIn: shift(from), checkOut: shift(from + nights), adults, children, nightlyRate, status, notes });
+    return add('bookings', { roomId, guestId, checkIn: shift(from), checkOut: shift(from + nights), adults, children, nightlyRate, status, guestNotes: '', notes, ...extra });
   };
 
   // In the house now
@@ -100,8 +100,43 @@ function fill(data) {
   pay(bPastGrace, 4, 555, 'Card', 'Paid in full');
   pay(bCancelled, 3, 60, 'Online', 'Deposit kept after cancellation');
 
+  // A reservation a guest sent from their own account, waiting for the management to confirm it.
+  booking(r201, emma, 4, 2, 'Pending', 2, 0, null, '', { source: 'Guest portal', guestNotes: 'A quiet room away from the lift, please.' });
+
+  // Services the hotel offers, and what guests have asked for.
+  const service = (name, description, price, unit, status = 'Available') => add('services', { name, description, price, unit, status });
+  const breakfast = service('Breakfast', 'Buffet breakfast served from 7 to 10.', 12, 'person');
+  const pickup = service('Airport pickup', 'A private car meets you at arrivals.', 35, 'trip');
+  const spa = service('Spa massage', 'Sixty minutes with a licensed therapist. Booking ahead is recommended.', 65, 'session');
+  const laundry = service('Laundry', 'Washed, dried and folded within 24 hours.', 15, 'bag');
+  service('Late check-out', 'Keep your room until 4pm.', 25, 'room', 'Unavailable');
+
+  const order = (guestId, serviceId, from, quantity, price, status, bookingId = null, notes = '') =>
+    add('serviceOrders', { guestId, serviceId, date: shift(from), quantity, unitPrice: price, bookingId, status, notes });
+  order(alice, breakfast, -1, 4, 12, 'Confirmed', bAlice, 'Two breakfasts each morning.');
+  order(ben, pickup, 2, 1, 35, 'Requested', bBen, 'Flight arrives 18:40.');
+  order(chloe, spa, 1, 2, 65, 'Requested', null, 'For two adults, late afternoon.');
+  order(grace, pickup, 0, 1, 35, 'Confirmed', bGrace);
+  order(emma, laundry, -1, 1, 15, 'Completed', bEmma);
+
+  // Questions guests have sent, one of them already answered.
+  const inquiry = (guestId, topic, subject, message, extra = {}) =>
+    add('inquiries', { guestId, topic, subject, message, roomType: null, serviceName: '', checkIn: null, checkOut: null, status: 'Open', reply: '', ...extra });
+  inquiry(isabel, 'General', 'Parking for a van', 'Is there parking for a camper van, and is there a height limit?');
+  inquiry(jonas, 'Room', 'Suite for an anniversary', 'We would like a suite for our anniversary. Is one free that weekend?', {
+    roomType: 'Suite',
+    checkIn: shift(8),
+    checkOut: shift(10),
+  });
+  inquiry(hiro, 'Service', 'Spa opening hours', 'What time does the spa open, and can we book a couple’s massage?', {
+    serviceName: 'Spa massage',
+    status: 'Answered',
+    reply: 'The spa is open from 10 to 8. A couple’s massage is possible; just request it under Services and we will confirm a time.',
+    repliedAt: new Date().toISOString(),
+  });
+
   // Safety net for the demo data: no room may be held by two bookings on the same night.
-  const holding = data.bookings.filter((b) => b.status === 'Confirmed' || b.status === 'Checked in');
+  const holding = data.bookings.filter((b) => b.status === 'Pending' || b.status === 'Confirmed' || b.status === 'Checked in');
   for (const a of holding) {
     for (const b of holding) {
       if (a.id < b.id && a.roomId === b.roomId && a.checkIn < b.checkOut && b.checkIn < a.checkOut) {

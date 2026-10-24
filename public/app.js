@@ -1,5 +1,8 @@
 'use strict';
 
+// The app shell, the sign-in screens, and everything the hotel's management sees.
+// The guest pages live in portal.js, which is loaded first and only run from here.
+
 const CURRENCY = 'USD';
 const money = new Intl.NumberFormat(undefined, { style: 'currency', currency: CURRENCY });
 
@@ -24,21 +27,24 @@ const fmtDate = (s) => (s ? local(s).toLocaleDateString(undefined, { year: 'nume
 const fmtShort = (s) => (s ? local(s).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
 const fmtWeekday = (s) => local(s).toLocaleDateString(undefined, { weekday: 'short' });
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const countLabel = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const byLabel = (a, b) => a.label.localeCompare(b.label, undefined, { numeric: true });
 const byNumber = (a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true });
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const BADGE_COLOR = {
-  Confirmed: 'blue', 'Checked in': 'green', 'Checked out': 'gray', Cancelled: 'red',
+  Pending: 'amber', Confirmed: 'blue', 'Checked in': 'green', 'Checked out': 'gray', Cancelled: 'red',
   Occupied: 'green', Reserved: 'amber', Vacant: 'gray', 'Out of service': 'red',
-  Paid: 'green', Active: 'green',
+  Requested: 'amber', Declined: 'red', Completed: 'green',
+  Open: 'blue', Answered: 'green', Closed: 'gray',
+  Available: 'green', Unavailable: 'gray', Paid: 'green', Active: 'green',
 };
 const badge = (text) => `<span class="badge ${BADGE_COLOR[text] ?? 'gray'}">${esc(text)}</span>`;
-const STATUS_TOAST = {
+const BOOKING_TOAST = {
+  Confirmed: 'Booking confirmed',
   'Checked in': 'Guest checked in',
   'Checked out': 'Guest checked out',
   Cancelled: 'Booking cancelled',
-  Confirmed: 'Booking reinstated',
 };
 
 // ---------------------------------------------------------------------------
@@ -52,6 +58,9 @@ const ICON_PATHS = {
   rooms: '<path d="M3 19V6"/><path d="M3 15h18v4"/><path d="M21 15v-3a3 3 0 0 0-3-3h-8v6"/><circle cx="6.5" cy="11" r="1.7"/>',
   guests: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M17.5 14.2A5 5 0 0 1 21.5 19"/>',
   payments: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/><path d="M6.5 15h3"/>',
+  chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M8.5 11.5h7M8.5 14.5h4"/>',
+  sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/>',
+  bell: '<path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   arrive: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/>',
   depart: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -69,6 +78,8 @@ const ICON_PATHS = {
   moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3.5 7l8.5 6 8.5-6"/>',
+  phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>',
   lock: '<rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   'eye-off': '<path d="M3 3l18 18"/><path d="M10.6 6.2A9.8 9.8 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.6 7.7A17 17 0 0 0 2 12s3.6 7 10 7a9.6 9.6 0 0 0 4.1-.9"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
@@ -99,7 +110,7 @@ async function api(method, url, body) {
   return data;
 }
 
-const state = { rooms: [], guests: [], bookings: [], payments: [] };
+const state = { rooms: [], guests: [], bookings: [], payments: [], services: [], serviceOrders: [], inquiries: [] };
 
 async function loadAll() {
   const keys = Object.keys(state);
@@ -189,14 +200,32 @@ function syncNewGuest(form) {
   form.elements.namedItem('newGuestName').required = adding;
 }
 
+// A guest's stays that can still be charged for a service.
+function stayOptions(guestId, currentId) {
+  return state.bookings
+    .filter((b) => b.guestId === guestId && (['Pending', 'Confirmed', 'Checked in'].includes(b.status) || b.id === currentId))
+    .sort((a, b) => a.checkIn.localeCompare(b.checkIn))
+    .map((b) => ({ value: b.id, label: `${fmtShort(b.checkIn)} – ${fmtShort(b.checkOut)} · Room ${b.roomNumber}` }));
+}
+
+function refillSelect(form, ent, key) {
+  const field = ent.fields.find((f) => f.key === key);
+  const select = form.elements.namedItem(key);
+  const ctx = { rec: form._rec ?? {}, preset: {}, val: (k) => form.elements.namedItem(k)?.value ?? '' };
+  select.innerHTML = optionsHtml(field, ctx, select.value);
+}
+
 // ---------------------------------------------------------------------------
 // Entity definitions: each drives its list and its add/edit form.
 //   fields: { key, label, type, required, wide, step, min, choices | ref | options(ctx), noBlank, initial, hidden, group }
 //   columns: { label, cls, render(row) -> HTML }
-//   actions: { id, label | icon+title, when(row), status | open(row), confirm, danger }
+//   actions: { id, label | icon+title, when(row), status+done | open(row), confirm, danger }
 // ---------------------------------------------------------------------------
 
-const BOOKING_ORDER = { 'Checked in': 0, Confirmed: 1, 'Checked out': 2, Cancelled: 3 };
+const BOOKING_ORDER = { Pending: 0, 'Checked in': 1, Confirmed: 2, 'Checked out': 3, Cancelled: 4 };
+const ORDER_ORDER = { Requested: 0, Confirmed: 1, Completed: 2, Declined: 3, Cancelled: 3 };
+const INQUIRY_ORDER = { Open: 0, Answered: 1, Closed: 2 };
+const guestsLine = (r) => `${plural(r.adults, 'adult')}${r.children ? ` · ${r.children} ${r.children === 1 ? 'child' : 'children'}` : ''}`;
 
 const ENTITIES = {
   bookings: {
@@ -244,16 +273,19 @@ const ENTITIES = {
         noBlank: true,
         initial: () => 'Confirmed',
         options: ({ rec }) =>
-          (rec.id ? ['Confirmed', 'Checked in', 'Checked out', 'Cancelled'] : ['Confirmed', 'Checked in']).map((s) => ({ value: s, label: s })),
+          (rec.id ? ['Pending', 'Confirmed', 'Checked in', 'Checked out', 'Cancelled'] : ['Confirmed', 'Checked in']).map((s) => ({ value: s, label: s })),
       },
       { key: 'summary', type: 'info' },
-      { key: 'notes', label: 'Notes', type: 'textarea', wide: true },
+      { key: 'guestNotes', label: "Guest's requests", type: 'textarea', wide: true },
+      { key: 'notes', label: 'Internal notes', type: 'textarea', wide: true },
     ],
     columns: [
       {
         label: 'Guest',
         render: (r) =>
-          `<strong>${esc(r.guestName)}</strong><div class="sub">${esc(`${plural(r.adults, 'adult')}${r.children ? ` · ${r.children} ${r.children === 1 ? 'child' : 'children'}` : ''}`)}</div>`,
+          `<strong>${esc(r.guestName)}</strong>${r.source === 'Guest portal' ? ' <span class="tag">Online</span>' : ''}<div class="sub">${esc(guestsLine(r))}</div>${
+            r.guestNotes ? `<div class="sub clamp">“${esc(r.guestNotes)}”</div>` : ''
+          }`,
       },
       { label: 'Room', render: (r) => `${esc(r.roomNumber)}<div class="sub">${esc(r.roomType)}</div>` },
       { label: 'Stay', render: (r) => `${esc(fmtShort(r.checkIn))} → ${esc(fmtShort(r.checkOut))}<div class="sub">${esc(plural(r.nights, 'night'))}</div>` },
@@ -267,18 +299,20 @@ const ENTITIES = {
     ],
     sort: (a, b) =>
       BOOKING_ORDER[a.status] - BOOKING_ORDER[b.status] ||
-      (BOOKING_ORDER[a.status] < 2 ? a.checkIn.localeCompare(b.checkIn) : b.checkIn.localeCompare(a.checkIn)),
+      (BOOKING_ORDER[a.status] < 3 ? a.checkIn.localeCompare(b.checkIn) : b.checkIn.localeCompare(a.checkIn)),
     filters: [
       { id: 'all', label: 'All', test: () => true },
+      { id: 'pending', label: 'Pending', test: (r) => r.status === 'Pending' },
       { id: 'upcoming', label: 'Upcoming', test: (r) => r.status === 'Confirmed' },
       { id: 'inhouse', label: 'In house', test: (r) => r.status === 'Checked in' },
       { id: 'past', label: 'Past', test: (r) => r.status === 'Checked out' },
       { id: 'cancelled', label: 'Cancelled', test: (r) => r.status === 'Cancelled' },
     ],
     actions: [
-      { id: 'checkin', label: 'Check in', status: 'Checked in', when: (r) => r.status === 'Confirmed' },
-      { id: 'checkout', label: 'Check out', status: 'Checked out', when: (r) => r.status === 'Checked in' },
-      { id: 'reinstate', label: 'Reinstate', status: 'Confirmed', when: (r) => r.status === 'Cancelled' },
+      { id: 'confirm', label: 'Confirm', status: 'Confirmed', done: BOOKING_TOAST.Confirmed, when: (r) => r.status === 'Pending' },
+      { id: 'checkin', label: 'Check in', status: 'Checked in', done: BOOKING_TOAST['Checked in'], when: (r) => r.status === 'Confirmed' },
+      { id: 'checkout', label: 'Check out', status: 'Checked out', done: BOOKING_TOAST['Checked out'], when: (r) => r.status === 'Checked in' },
+      { id: 'reinstate', label: 'Reinstate', status: 'Confirmed', done: 'Booking reinstated', when: (r) => r.status === 'Cancelled' },
       {
         id: 'pay',
         icon: 'payments',
@@ -287,17 +321,27 @@ const ENTITIES = {
         open: (r) => openForm('payments', null, { bookingId: r.id, amount: r.balance }),
       },
       {
+        id: 'decline',
+        icon: 'close',
+        title: 'Decline this reservation',
+        danger: true,
+        status: 'Cancelled',
+        done: 'Reservation declined',
+        confirm: 'Decline this reservation? The guest will see it as cancelled.',
+        when: (r) => r.status === 'Pending',
+      },
+      {
         id: 'cancel',
         icon: 'close',
         title: 'Cancel booking',
         danger: true,
         status: 'Cancelled',
+        done: BOOKING_TOAST.Cancelled,
         confirm: 'Cancel this booking? The room becomes available again.',
         when: (r) => r.status === 'Confirmed',
       },
     ],
     afterOpen(form, rec, isNew, preset) {
-      form._rec = rec;
       form.dataset.wantRoom = rec?.roomId ?? preset.roomId ?? '';
       form.dataset.autoRate = rec ? String(state.rooms.find((r) => r.id === rec.roomId)?.rate ?? '') : '';
       form.addEventListener('input', (e) => {
@@ -342,7 +386,7 @@ const ENTITIES = {
       { key: 'capacity', label: 'Sleeps (guests)', type: 'number', step: '1', min: 1, required: true, initial: () => 2 },
       { key: 'rate', label: 'Rate per night', type: 'number', step: '0.01', required: true },
       { key: 'status', label: 'Availability', choices: ['Active', 'Out of service'] },
-      { key: 'description', label: 'Description', type: 'textarea', wide: true },
+      { key: 'description', label: 'Description (shown to guests)', type: 'textarea', wide: true },
     ],
     sort: byNumber,
     actions: [
@@ -366,7 +410,7 @@ const ENTITIES = {
       { key: 'notes', label: 'Notes', type: 'textarea', wide: true },
     ],
     columns: [
-      { label: 'Name', render: (r) => `<strong>${esc(r.name)}</strong>` },
+      { label: 'Name', render: (r) => `<strong>${esc(r.name)}</strong>${r.hasAccount ? ' <span class="tag">Account</span>' : ''}` },
       { label: 'Email', render: (r) => esc(r.email) },
       { label: 'Phone', render: (r) => esc(r.phone) },
       { label: 'Stays', cls: 'num', render: (r) => r.stays },
@@ -426,6 +470,186 @@ const ENTITIES = {
       if (booking && booking.balance > 0) form.elements.namedItem('amount').value = booking.balance;
     },
   },
+
+  inquiries: {
+    singular: 'Inquiry',
+    plural: 'Inquiries',
+    noAdd: true, // guests write these
+    noEdit: true,
+    fields: [],
+    columns: [
+      { label: 'Guest', render: (r) => `<strong>${esc(r.guestName)}</strong><div class="sub">${esc(fmtDate(r.createdAt.slice(0, 10)))}</div>` },
+      {
+        label: 'Inquiry',
+        cls: 'wrap',
+        render: (r) =>
+          `<strong>${esc(r.subject)}</strong><div class="sub clamp">${esc(r.message)}</div>${r.reply ? `<div class="sub clamp reply-line">↳ ${esc(r.reply)}</div>` : ''}`,
+      },
+      {
+        label: 'About',
+        cls: 'wrap',
+        render: (r) =>
+          esc([r.roomType && `${r.roomType} room`, r.serviceName, r.checkIn && `${fmtShort(r.checkIn)} → ${fmtShort(r.checkOut)}`].filter(Boolean).join(' · ')) ||
+          '<span class="sub">—</span>',
+      },
+      { label: 'Status', render: (r) => badge(r.status) },
+    ],
+    sort: (a, b) => INQUIRY_ORDER[a.status] - INQUIRY_ORDER[b.status] || b.createdAt.localeCompare(a.createdAt),
+    filters: [
+      { id: 'all', label: 'All', test: () => true },
+      { id: 'open', label: 'Open', test: (r) => r.status === 'Open' },
+      { id: 'answered', label: 'Answered', test: (r) => r.status === 'Answered' },
+      { id: 'closed', label: 'Closed', test: (r) => r.status === 'Closed' },
+    ],
+    actions: [
+      { id: 'reply', label: 'Reply', when: (r) => r.status !== 'Closed', open: (r) => openForm(REPLY_FORM, r) },
+      { id: 'reopen', label: 'Reopen', status: 'Open', done: 'Inquiry reopened', when: (r) => r.status === 'Closed' },
+      { id: 'close', icon: 'check', title: 'Close this inquiry', status: 'Closed', done: 'Inquiry closed', when: (r) => r.status !== 'Closed' },
+    ],
+  },
+
+  serviceOrders: {
+    singular: 'Request',
+    plural: 'Service requests',
+    addLabel: 'Add request',
+    saveLabel: 'Save request',
+    needs: ['services', 'guests'],
+    fields: [
+      { key: 'guestId', label: 'Guest', ref: 'guests', required: true, wide: true },
+      { key: 'serviceId', label: 'Service', ref: 'services', required: true, wide: true },
+      { key: 'date', label: 'Date', type: 'date', required: true, initial: today },
+      { key: 'quantity', label: 'Quantity', type: 'number', step: '1', min: 1, required: true, initial: () => 1 },
+      { key: 'unitPrice', label: 'Price each', type: 'number', step: '0.01' },
+      { key: 'status', label: 'Status', choices: ['Requested', 'Confirmed', 'Declined', 'Completed', 'Cancelled'] },
+      {
+        key: 'bookingId',
+        label: 'Charge to this stay (optional)',
+        wide: true,
+        options: ({ rec, val }) => stayOptions(val('guestId'), rec.bookingId),
+      },
+      { key: 'notes', label: 'Notes', type: 'textarea', wide: true },
+    ],
+    columns: [
+      { label: 'Guest', render: (r) => `<strong>${esc(r.guestName)}</strong>` },
+      {
+        label: 'Service',
+        render: (r) => `${esc(r.serviceName)}<div class="sub">${esc(`${r.quantity} × ${money.format(r.unitPrice)}`)}</div>${r.notes ? `<div class="sub clamp">“${esc(r.notes)}”</div>` : ''}`,
+      },
+      { label: 'For', render: (r) => esc(fmtDate(r.date)) },
+      { label: 'Total', cls: 'num', render: (r) => money.format(r.total) },
+      {
+        label: 'Charged to',
+        render: (r) => (r.stay ? `Room ${esc(r.roomNumber)}<div class="sub">${esc(r.stay.replace(/\d{4}-\d{2}-\d{2}/g, (d) => fmtShort(d)))}</div>` : '<span class="sub">Not on a bill</span>'),
+      },
+      { label: 'Status', render: (r) => badge(r.status) },
+    ],
+    sort: (a, b) => ORDER_ORDER[a.status] - ORDER_ORDER[b.status] || a.date.localeCompare(b.date),
+    filters: [
+      { id: 'all', label: 'All', test: () => true },
+      { id: 'new', label: 'New', test: (r) => r.status === 'Requested' },
+      { id: 'confirmed', label: 'Confirmed', test: (r) => r.status === 'Confirmed' },
+      { id: 'done', label: 'Done', test: (r) => r.status === 'Completed' },
+      { id: 'closed', label: 'Declined or cancelled', test: (r) => r.status === 'Declined' || r.status === 'Cancelled' },
+    ],
+    actions: [
+      { id: 'confirm', label: 'Confirm', status: 'Confirmed', done: 'Request confirmed', when: (r) => r.status === 'Requested' },
+      { id: 'complete', label: 'Mark done', status: 'Completed', done: 'Marked as done', when: (r) => r.status === 'Confirmed' },
+      {
+        id: 'decline',
+        icon: 'close',
+        title: 'Decline this request',
+        danger: true,
+        status: 'Declined',
+        done: 'Request declined',
+        confirm: 'Decline this request?',
+        when: (r) => r.status === 'Requested',
+      },
+      {
+        id: 'cancel',
+        icon: 'close',
+        title: 'Cancel this request',
+        danger: true,
+        status: 'Cancelled',
+        done: 'Request cancelled',
+        confirm: 'Cancel this request? It will no longer be charged.',
+        when: (r) => r.status === 'Confirmed',
+      },
+    ],
+    onChange(key, form) {
+      if (key === 'guestId') refillSelect(form, this, 'bookingId');
+      if (key === 'serviceId') {
+        const service = state.services.find((s) => s.id === form.elements.namedItem('serviceId').value);
+        const price = form.elements.namedItem('unitPrice');
+        if (service && (price.value === '' || price.value === form.dataset.autoPrice)) {
+          price.value = service.price;
+          form.dataset.autoPrice = String(service.price);
+        }
+      }
+    },
+    afterOpen(form, rec) {
+      form.dataset.autoPrice = rec ? String(state.services.find((s) => s.id === rec.serviceId)?.price ?? '') : '';
+    },
+  },
+
+  services: {
+    singular: 'Service',
+    plural: 'Services',
+    addLabel: 'Add service',
+    fields: [
+      { key: 'name', label: 'Name', required: true, wide: true },
+      { key: 'description', label: 'Description (shown to guests)', type: 'textarea', wide: true },
+      { key: 'price', label: 'Price', type: 'number', step: '0.01', required: true },
+      { key: 'unit', label: 'Per (for example "person" or "trip")' },
+      { key: 'status', label: 'Offered to guests', choices: ['Available', 'Unavailable'] },
+    ],
+    columns: [
+      { label: 'Service', cls: 'wrap', render: (r) => `<strong>${esc(r.name)}</strong>${r.description ? `<div class="sub clamp">${esc(r.description)}</div>` : ''}` },
+      { label: 'Price', cls: 'num', render: (r) => `${money.format(r.price)}${r.unit ? `<div class="sub">${esc(r.unit.startsWith('per ') ? r.unit : `per ${r.unit}`)}</div>` : ''}` },
+      { label: 'Offered', render: (r) => badge(r.status) },
+    ],
+    sort: byLabel,
+  },
+};
+
+// The management's reply to a guest's inquiry (a form of its own, not a record type).
+const REPLY_FORM = {
+  singular: 'Reply',
+  saveLabel: 'Send reply',
+  toast: 'Reply sent',
+  title: () => 'Reply to the guest',
+  intro: (rec) => `
+    <div class="quote-box">
+      <strong>${esc(rec.subject)}</strong>
+      <p>${esc(rec.message)}</p>
+      <span class="sub">${esc(
+        [rec.guestName, rec.roomType && `${rec.roomType} room`, rec.serviceName, rec.checkIn && `${fmtShort(rec.checkIn)} → ${fmtShort(rec.checkOut)}`].filter(Boolean).join(' · '),
+      )}</span>
+    </div>`,
+  fields: [{ key: 'reply', label: 'Your reply', type: 'textarea', required: true, wide: true }],
+  submit: (body, rec) => api('POST', `/api/inquiries/${rec.id}/reply`, body),
+};
+
+// Some pages go by a friendlier name than the records they list.
+const ROUTE_ENTITY = { requests: 'serviceOrders' };
+const entityFor = (route) => ENTITIES[ROUTE_ENTITY[route] ?? route];
+
+const MANAGER_NAV = [
+  ['dashboard', 'Dashboard', 'dashboard'],
+  ['calendar', 'Calendar', 'calendar'],
+  ['bookings', 'Bookings', 'bookings'],
+  ['rooms', 'Rooms', 'rooms'],
+  ['guests', 'Guests', 'guests'],
+  ['payments', 'Payments', 'payments'],
+  ['inquiries', 'Inquiries', 'chat'],
+  ['requests', 'Service requests', 'sparkle'],
+  ['services', 'Services', 'bell'],
+];
+
+// The numbers beside the menu items: what is waiting for an answer.
+const MANAGER_BADGES = {
+  bookings: () => state.bookings.filter((b) => b.status === 'Pending').length,
+  inquiries: () => state.inquiries.filter((i) => i.status === 'Open').length,
+  requests: () => state.serviceOrders.filter((o) => o.status === 'Requested').length,
 };
 
 // ---------------------------------------------------------------------------
@@ -445,19 +669,27 @@ const dialog = $('#dialog');
 const toastEl = $('#toast');
 
 let currentUser = null;
+let addAction = null;
 
 for (const el of document.querySelectorAll('[data-icon]')) el.innerHTML = icon(el.dataset.icon);
 $('#logout').innerHTML = icon('logout');
 
-const NAV = [
-  ['dashboard', 'Dashboard'],
-  ['calendar', 'Calendar'],
-  ['bookings', 'Bookings'],
-  ['rooms', 'Rooms'],
-  ['guests', 'Guests'],
-  ['payments', 'Payments'],
-];
-$('#nav').innerHTML = NAV.map(([k, label]) => `<a href="#/${k}" data-nav="${k}">${icon(k)}<span>${esc(label)}</span></a>`).join('');
+const isGuest = () => currentUser?.role === 'guest';
+
+function renderNav() {
+  const items = isGuest() ? PORTAL_NAV : MANAGER_NAV;
+  $('#nav').innerHTML = items
+    .map(([route, label, iconName]) => `<a href="#/${route}" data-nav="${route}">${icon(iconName)}<span>${esc(label)}</span><i class="nav-badge" data-badge="${route}" hidden></i></a>`)
+    .join('');
+}
+
+function updateBadges() {
+  for (const el of document.querySelectorAll('.nav-badge')) {
+    const count = isGuest() ? 0 : (MANAGER_BADGES[el.dataset.badge]?.() ?? 0);
+    el.textContent = count > 99 ? '99+' : String(count);
+    el.hidden = count === 0;
+  }
+}
 
 function syncThemeIcons() {
   const dark = document.documentElement.dataset.theme === 'dark';
@@ -497,43 +729,65 @@ function toast(message, isError = false) {
 }
 
 // ---------------------------------------------------------------------------
-// Sign in / first-run setup
+// Sign in, guest sign-up and first-run setup
 // ---------------------------------------------------------------------------
+
+const AUTH_COPY = {
+  setup: {
+    title: 'Create the management account',
+    intro: 'This account runs the hotel: bookings, rooms, guests and payments. Guests create their own accounts afterwards.',
+    button: 'Create account',
+  },
+  register: {
+    title: 'Create a guest account',
+    intro: 'Reserve a room, request a service or ask the hotel a question.',
+    button: 'Create account',
+  },
+  login: { title: 'Welcome back', intro: 'Guests and hotel staff sign in here.', button: 'Sign in' },
+};
 
 function showAuth(mode, notice = '') {
   const setup = mode === 'setup';
+  const register = mode === 'register';
+  const copy = AUTH_COPY[mode];
   bootEl.hidden = true;
   shell.hidden = true;
   authEl.hidden = false;
-  document.title = `${setup ? 'Create account' : 'Sign in'} · Hotel PMS`;
+  document.title = `${copy.title} · Hotel PMS`;
+
+  const input = (name, label, iconName, attrs = '') =>
+    `<label class="field"><span class="field-label">${label}</span><span class="input-wrap">${icon(iconName)}<input name="${name}" maxlength="200" ${attrs}></span></label>`;
 
   authEl.innerHTML = `
     <button type="button" class="icon-btn theme-toggle theme-corner" aria-label="Switch colour theme"></button>
     <div class="glass auth-card spot">
       <div class="auth-logo">
         <span class="logo">${icon('rooms')}</span>
-        <h1>${setup ? 'Create your account' : 'Welcome back'}</h1>
-        <p>${setup ? 'Set up the first account to start taking bookings.' : 'Sign in to manage your hotel.'}</p>
+        <h1>${esc(copy.title)}</h1>
+        <p>${esc(copy.intro)}</p>
       </div>
       ${notice ? `<p class="notice" role="status">${esc(notice)}</p>` : ''}
       <form class="auth-form" novalidate>
-        <label class="field"><span class="field-label">Username</span>
-          <span class="input-wrap">${icon('user')}<input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32" required></span>
-        </label>
+        ${register ? input('name', 'Your name', 'user', 'autocomplete="name" required') : ''}
+        ${register ? input('email', 'Email', 'mail', 'type="email" autocomplete="email" required') : ''}
+        ${register ? input('phone', 'Phone (optional)', 'phone', 'type="tel" autocomplete="tel"') : ''}
+        ${input('username', 'Username', 'user', 'autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32" required')}
         <label class="field"><span class="field-label">Password</span>
-          <span class="input-wrap">${icon('lock')}<input class="has-eye" type="password" name="password" autocomplete="${setup ? 'new-password' : 'current-password'}" maxlength="128" required>
+          <span class="input-wrap">${icon('lock')}<input class="has-eye" type="password" name="password" autocomplete="${setup || register ? 'new-password' : 'current-password'}" maxlength="128" required>
             <button type="button" class="icon-btn eye" aria-label="Show password">${icon('eye')}</button></span>
         </label>
         ${
-          setup
+          setup || register
             ? `<label class="field"><span class="field-label">Confirm password</span>
           <span class="input-wrap">${icon('lock')}<input type="password" name="confirm" autocomplete="new-password" maxlength="128" required></span></label>`
             : ''
         }
         <p class="form-error" role="alert"></p>
-        <button type="submit" class="btn primary block"><span>${setup ? 'Create account' : 'Sign in'}</span><span class="spinner" aria-hidden="true"></span></button>
+        <button type="submit" class="btn primary block"><span>${esc(copy.button)}</span><span class="spinner" aria-hidden="true"></span></button>
       </form>
-      ${setup ? '<p class="auth-hint">Use at least 8 characters. This account is the one you will sign in with from now on.</p>' : ''}
+      ${setup || register ? '<p class="auth-hint">Use at least 8 characters for the password.</p>' : ''}
+      ${mode === 'login' ? '<p class="auth-switch">New guest? <button type="button" class="link-btn" data-switch="register">Create an account</button></p>' : ''}
+      ${register ? '<p class="auth-switch">Already have an account? <button type="button" class="link-btn" data-switch="login">Sign in</button></p>' : ''}
     </div>`;
   syncThemeIcons();
 
@@ -550,6 +804,8 @@ function showAuth(mode, notice = '') {
     card.classList.add('shake');
   };
 
+  $('[data-switch]', authEl)?.addEventListener('click', (e) => showAuth(e.currentTarget.dataset.switch));
+
   const eye = $('.eye', form);
   eye.addEventListener('click', () => {
     const show = field('password').type === 'password';
@@ -561,20 +817,26 @@ function showAuth(mode, notice = '') {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     errorEl.textContent = '';
-    const username = field('username').value.trim();
-    const password = field('password').value;
-    if (!username || !password) return fail('Enter your username and password.');
-    if (setup && password.length < 8) return fail('Use at least 8 characters for the password.');
-    if (setup && password !== field('confirm').value) return fail('The passwords do not match.');
+    const body = { username: field('username').value.trim(), password: field('password').value };
+    if (!body.username || !body.password) return fail('Enter your username and password.');
+    if (setup || register) {
+      if (body.password.length < 8) return fail('Use at least 8 characters for the password.');
+      if (body.password !== field('confirm').value) return fail('The passwords do not match.');
+    }
+    if (register) {
+      Object.assign(body, { name: field('name').value.trim(), email: field('email').value.trim(), phone: field('phone').value.trim() });
+      if (!body.name) return fail('Enter your name.');
+      if (!body.email) return fail('Enter your email address.');
+    }
 
     form.classList.add('is-busy');
     submitBtn.disabled = true;
     try {
-      const { user } = await api('POST', setup ? '/api/auth/setup' : '/api/auth/login', { username, password });
+      const { user } = await api('POST', `/api/auth/${mode}`, body);
       await enterApp(user);
     } catch (err) {
       fail(err.message);
-      if (!setup) {
+      if (mode === 'login') {
         field('password').value = '';
         field('password').focus();
       }
@@ -584,7 +846,7 @@ function showAuth(mode, notice = '') {
     }
   });
 
-  field('username').focus();
+  field(register ? 'name' : 'username').focus();
 }
 
 async function enterApp(user) {
@@ -595,10 +857,13 @@ async function enterApp(user) {
   authEl.hidden = true;
   authEl.innerHTML = '';
   shell.hidden = false;
-  $('#username').textContent = user.username;
-  $('#avatar').textContent = user.username.charAt(0).toUpperCase();
+  const display = user.name || user.username;
+  $('#username').textContent = display;
+  $('#avatar').textContent = display.charAt(0).toUpperCase();
+  renderNav();
   shownName = null;
-  if (!location.hash) history.replaceState(null, '', '#/dashboard');
+  const home = isGuest() ? '#/stay' : '#/dashboard';
+  if (!location.hash) history.replaceState(null, '', home);
   await route();
 }
 
@@ -615,6 +880,7 @@ $('#logout').addEventListener('click', async () => {
   } catch {
     // Even if the request fails, drop the local session view.
   }
+  location.hash = '';
   endSession('You have been signed out.');
 });
 
@@ -638,12 +904,14 @@ const skeleton = () => `
 
 async function route() {
   if (!currentUser) return;
-  const name = location.hash.replace(/^#\//, '') || 'dashboard';
-  const ent = ENTITIES[name];
-  if (name !== 'dashboard' && name !== 'calendar' && !ent) {
-    location.hash = '#/dashboard';
+  const name = location.hash.replace(/^#\//, '') || (isGuest() ? 'stay' : 'dashboard');
+  const guestPage = isGuest() ? PORTAL_PAGES[name] : null;
+  const ent = isGuest() ? null : entityFor(name);
+  if (isGuest() ? !guestPage : name !== 'dashboard' && name !== 'calendar' && !ent) {
+    location.hash = isGuest() ? '#/stay' : '#/dashboard';
     return;
   }
+
   const seq = ++routeSeq;
   const fresh = name !== shownName;
   if (fresh) {
@@ -657,28 +925,52 @@ async function route() {
     else a.removeAttribute('aria-current');
   }
 
-  const pageTitle = ent ? ent.plural : name === 'calendar' ? 'Calendar' : 'Dashboard';
-  titleEl.textContent = name === 'dashboard' ? `${greeting()}, ${currentUser.username}` : pageTitle;
-  subtitleEl.textContent =
-    name === 'dashboard'
+  // Title, subtitle and the main button for this page.
+  const pageTitle = guestPage ? guestPage.title : ent ? ent.plural : name === 'calendar' ? 'Calendar' : 'Dashboard';
+  titleEl.textContent = name === 'dashboard' && !guestPage ? `${greeting()}, ${currentUser.username}` : pageTitle;
+  subtitleEl.textContent = guestPage
+    ? guestPage.subtitle
+    : name === 'dashboard'
       ? new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
       : name === 'calendar'
         ? 'Click an empty night to start a booking.'
         : '';
   searchWrap.hidden = !ent;
-  addBtn.hidden = false;
-  addBtn.innerHTML = `${icon('plus')}<span>${esc(ent ? ent.addLabel : 'New booking')}</span>`;
+
+  let add = null;
+  if (guestPage) add = guestPage.add ?? null;
+  else if (!ent?.noAdd) {
+    const target = ent ? ent : ENTITIES.bookings;
+    const key = ent ? ROUTE_ENTITY[name] ?? name : 'bookings';
+    add = {
+      label: target.addLabel,
+      run: () => {
+        const missing = target.needs?.find((k) => !state[k].length);
+        if (missing) return toast(`Add a ${ENTITIES[missing].singular.toLowerCase()} first`, true);
+        openForm(key);
+      },
+    };
+  }
+  addAction = add?.run ?? null;
+  addBtn.hidden = !add;
+  if (add) addBtn.innerHTML = `${icon('plus')}<span>${esc(add.label)}</span>`;
   document.title = `${pageTitle} · Hotel PMS`;
 
   try {
-    if (ent) {
+    if (guestPage) {
+      const data = await guestPage.load();
+      if (seq === routeSeq) guestPage.render(data, fresh);
+    } else if (ent) {
       await loadAll();
-      if (seq === routeSeq) renderList(name, fresh);
+      updateBadges();
+      if (seq === routeSeq) renderList(ROUTE_ENTITY[name] ?? name, fresh);
     } else if (name === 'calendar') {
       await loadAll();
+      updateBadges();
       if (seq === routeSeq) renderCalendar(fresh);
     } else {
       const [data] = await Promise.all([api('GET', '/api/dashboard'), loadAll()]);
+      updateBadges();
       if (seq === routeSeq) renderDashboard(data, fresh);
     }
   } catch (err) {
@@ -746,9 +1038,9 @@ function renderDashboard(d, fresh) {
         <p class="sub">Get set up in a few steps:</p>
         <ol>
           <li><a href="#/rooms">Add your rooms</a> with their type, capacity and nightly rate</li>
+          <li><a href="#/services">Add the services you offer</a>, such as breakfast or airport pickup</li>
           <li>Use <strong>New booking</strong> to pick dates, choose an available room and add the guest</li>
-          <li>Check guests in and out from the dashboard or the <a href="#/bookings">bookings list</a></li>
-          <li>Record payments as guests settle up</li>
+          <li>Guests can create their own accounts to reserve rooms, request services and ask questions. You confirm and reply here.</li>
         </ol>
       </div>`;
     afterRender(fresh);
@@ -783,6 +1075,22 @@ function renderDashboard(d, fresh) {
       </div>
     </div>`;
 
+  // What guests have sent that nobody has answered yet.
+  const waiting = d.requests.bookings + d.requests.inquiries + d.requests.serviceOrders;
+  const attention = waiting
+    ? `<section class="glass attention rise">
+        <div class="attention-icon">${icon('bell')}</div>
+        <div>
+          <strong>${waiting === 1 ? 'One thing needs' : `${waiting} things need`} your attention</strong>
+          <div class="attention-links">
+            ${d.requests.bookings ? `<a href="#/bookings">${esc(countLabel(d.requests.bookings, 'reservation request', 'reservation requests'))}</a>` : ''}
+            ${d.requests.inquiries ? `<a href="#/inquiries">${esc(countLabel(d.requests.inquiries, 'new inquiry', 'new inquiries'))}</a>` : ''}
+            ${d.requests.serviceOrders ? `<a href="#/requests">${esc(countLabel(d.requests.serviceOrders, 'service request', 'service requests'))}</a>` : ''}
+          </div>
+        </div>
+      </section>`
+    : '';
+
   const toCheckIn = d.arrivals.filter((b) => b.status === 'Confirmed').length;
   const toCheckOut = d.departures.filter((b) => b.status === 'Checked in').length;
   const average = Math.round(d.forecast.reduce((sum, f) => sum + f.rate, 0) / d.forecast.length);
@@ -816,18 +1124,28 @@ function renderDashboard(d, fresh) {
       ${tableHtml ? `<div class="table-wrap">${tableHtml}</div>` : `<div class="empty">${icon('inbox')}<p>${esc(emptyText)}</p></div>`}
     </section>`;
   const guestCell = (b) => `<td><strong>${esc(b.guestName)}</strong><div class="sub">${esc(`${plural(b.adults + b.children, 'guest')} · ${plural(b.nights, 'night')}`)}</div></td>`;
+  const roomCell = (b) => `<td>${esc(b.roomNumber)}<div class="sub">${esc(b.roomType)}</div></td>`;
   const balanceCell = (b) => `<td class="num">${b.balance > 0 ? `<span class="due">${money.format(b.balance)}</span>` : badge('Paid')}</td>`;
-  const quick = (b, status, label) =>
-    `<button type="button" class="btn small accent" data-bstatus="${status}" data-id="${esc(b.id)}">${label}</button>`;
+  const quick = (b, status, label) => `<button type="button" class="btn small accent" data-bstatus="${status}" data-id="${esc(b.id)}">${label}</button>`;
 
+  const pending = d.pendingBookings.length
+    ? table(
+        [['Guest'], ['Room'], ['Stay'], ['Total', 'num'], ['']],
+        d.pendingBookings
+          .map(
+            (b) => `<tr>${guestCell(b)}${roomCell(b)}
+              <td>${esc(fmtShort(b.checkIn))} → ${esc(fmtShort(b.checkOut))}</td><td class="num">${money.format(b.total)}</td>
+              <td class="num"><div class="row-actions">${quick(b, 'Confirmed', 'Confirm')}
+                <button type="button" class="icon-btn danger" data-bstatus="Cancelled" data-confirm="Decline this reservation? The guest will see it as cancelled." data-id="${esc(b.id)}" title="Decline" aria-label="Decline">${icon('close')}</button></div></td></tr>`,
+          )
+          .join(''),
+      )
+    : '';
   const arrivals = d.arrivals.length
     ? table(
         [['Guest'], ['Room'], ['Balance', 'num'], ['']],
         d.arrivals
-          .map(
-            (b) => `<tr>${guestCell(b)}<td>${esc(b.roomNumber)}<div class="sub">${esc(b.roomType)}</div></td>${balanceCell(b)}
-              <td class="num">${b.status === 'Confirmed' ? quick(b, 'Checked in', 'Check in') : badge(b.status)}</td></tr>`,
-          )
+          .map((b) => `<tr>${guestCell(b)}${roomCell(b)}${balanceCell(b)}<td class="num">${b.status === 'Confirmed' ? quick(b, 'Checked in', 'Check in') : badge(b.status)}</td></tr>`)
           .join(''),
       )
     : '';
@@ -835,15 +1153,13 @@ function renderDashboard(d, fresh) {
     ? table(
         [['Guest'], ['Room'], ['Balance', 'num'], ['']],
         d.departures
-          .map(
-            (b) => `<tr>${guestCell(b)}<td>${esc(b.roomNumber)}<div class="sub">${esc(b.roomType)}</div></td>${balanceCell(b)}
-              <td class="num">${b.status === 'Checked in' ? quick(b, 'Checked out', 'Check out') : badge(b.status)}</td></tr>`,
-          )
+          .map((b) => `<tr>${guestCell(b)}${roomCell(b)}${balanceCell(b)}<td class="num">${b.status === 'Checked in' ? quick(b, 'Checked out', 'Check out') : badge(b.status)}</td></tr>`)
           .join(''),
       )
     : '';
 
   view.innerHTML = `
+    ${attention}
     <div class="stats">
       ${occupancy}
       ${stat('Arrivals today', d.arrivals.length, 'int', toCheckIn ? `${toCheckIn} still to check in` : 'All checked in', 'arrive', 'cool')}
@@ -854,6 +1170,7 @@ function renderDashboard(d, fresh) {
     </div>
     ${forecast}
     <div class="panels">
+      ${d.pendingBookings.length ? `<div class="wide">${panel('Reservation requests', 'bell', pending, '')}</div>` : ''}
       ${panel('Arrivals today', 'arrive', arrivals, 'No arrivals today.')}
       ${panel('Departures today', 'depart', departures, 'No departures today.')}
     </div>`;
@@ -881,7 +1198,8 @@ function renderCalendar(fresh) {
   const weekend = (d) => [0, 6].includes(local(d).getDay());
   const dayClass = (d) => `${weekend(d) ? ' weekend' : ''}${d === todayStr ? ' today' : ''}`;
 
-  const held = state.bookings.filter((b) => b.status === 'Confirmed' || b.status === 'Checked in');
+  const held = state.bookings.filter((b) => ['Pending', 'Confirmed', 'Checked in'].includes(b.status));
+  const tones = { Pending: 'pending', Confirmed: 'confirmed', 'Checked in': 'in' };
   const rows = [...state.rooms]
     .sort(byNumber)
     .map((room) => {
@@ -899,8 +1217,7 @@ function renderCalendar(fresh) {
           const to = Math.min(CALENDAR_DAYS, daysBetween(start, b.checkOut));
           const cutLeft = b.checkIn < start ? ' cut-left' : '';
           const cutRight = b.checkOut > end ? ' cut-right' : '';
-          const tone = b.status === 'Checked in' ? 'in' : 'confirmed';
-          return `<button type="button" class="cal-item ${tone}${cutLeft}${cutRight}" data-booking="${esc(b.id)}" data-from="${from + 1}" data-to="${to + 1}"
+          return `<button type="button" class="cal-item ${tones[b.status]}${cutLeft}${cutRight}" data-booking="${esc(b.id)}" data-from="${from + 1}" data-to="${to + 1}"
             title="${esc(`${b.guestName} · ${fmtShort(b.checkIn)} → ${fmtShort(b.checkOut)} · ${b.status}`)}"><span>${esc(b.guestName)}</span><small>${esc(plural(b.nights, 'night'))}</small></button>`;
         })
         .join('');
@@ -923,6 +1240,7 @@ function renderCalendar(fresh) {
         <strong class="cal-range">${esc(range)}</strong>
       </div>
       <div class="cal-legend">
+        <span><i class="dot pending"></i>Pending</span>
         <span><i class="dot confirmed"></i>Confirmed</span>
         <span><i class="dot in"></i>Checked in</span>
         <span><i class="dot closed"></i>Out of service</span>
@@ -963,7 +1281,7 @@ function actionButtons(ent, r) {
   return [
     ...text,
     ...icons,
-    `<button type="button" class="icon-btn" data-act="edit" data-id="${esc(r.id)}" aria-label="Edit ${esc(ent.singular.toLowerCase())}" title="Edit">${icon('edit')}</button>`,
+    ent.noEdit ? '' : `<button type="button" class="icon-btn" data-act="edit" data-id="${esc(r.id)}" aria-label="Edit ${esc(ent.singular.toLowerCase())}" title="Edit">${icon('edit')}</button>`,
     `<button type="button" class="icon-btn danger" data-act="delete" data-id="${esc(r.id)}" aria-label="Delete ${esc(ent.singular.toLowerCase())}" title="Delete">${icon('trash')}</button>`,
   ].join('');
 }
@@ -998,8 +1316,9 @@ function renderList(name, fresh) {
     : '';
 
   if (!rows.length) {
+    const hint = ent.noAdd ? 'Guests will appear here when they get in touch.' : `Use <strong>${esc(ent.addLabel)}</strong> to create one.`;
     view.innerHTML = `${chips}<div class="glass card rise"><div class="empty">${icon('inbox')}<p>${
-      all.length ? 'Nothing in this view.' : `No ${esc(ent.plural.toLowerCase())} yet. Use <strong>${esc(ent.addLabel)}</strong> to create one.`
+      all.length ? 'Nothing in this view.' : `No ${esc(ent.plural.toLowerCase())} yet. ${hint}`
     }</p></div></div>`;
     afterRender(fresh);
     return;
@@ -1041,10 +1360,10 @@ function applySearch() {
 
 searchEl.addEventListener('input', applySearch);
 
-async function setBookingStatus(id, status) {
+async function setStatus(collection, id, status, done) {
   try {
-    await api('POST', `/api/bookings/${id}/status`, { status });
-    toast(STATUS_TOAST[status]);
+    await api('POST', `/api/${collection}/${id}/status`, { status });
+    toast(done ?? 'Updated');
     await route();
   } catch (err) {
     if (err.status !== 401) toast(err.message, true);
@@ -1054,7 +1373,11 @@ async function setBookingStatus(id, status) {
 view.addEventListener('click', async (e) => {
   // Dashboard quick actions
   const quick = e.target.closest('button[data-bstatus]');
-  if (quick) return setBookingStatus(quick.dataset.id, quick.dataset.bstatus);
+  if (quick) {
+    if (quick.dataset.confirm && !confirm(quick.dataset.confirm)) return;
+    const status = quick.dataset.bstatus;
+    return setStatus('bookings', quick.dataset.id, status, status === 'Cancelled' ? 'Reservation declined' : BOOKING_TOAST[status]);
+  }
 
   // Calendar
   const nav = e.target.closest('[data-cal]');
@@ -1098,7 +1421,7 @@ view.addEventListener('click', async (e) => {
       const action = ent.actions.find((a) => a.id === act);
       if (action.open) return action.open(rec);
       if (action.confirm && !confirm(action.confirm)) return;
-      return setBookingStatus(rec.id, action.status);
+      return setStatus(name, rec.id, action.status, action.done);
     }
     await route();
   } catch (err) {
@@ -1106,16 +1429,10 @@ view.addEventListener('click', async (e) => {
   }
 });
 
-addBtn.addEventListener('click', () => {
-  const name = ENTITIES[shownName] ? shownName : 'bookings';
-  const ent = ENTITIES[name];
-  const missing = ent.needs?.find((k) => !state[k].length);
-  if (missing) return toast(`Add a ${ENTITIES[missing].singular.toLowerCase()} first`, true);
-  openForm(name);
-});
+addBtn.addEventListener('click', () => addAction?.());
 
 // ---------------------------------------------------------------------------
-// Add / edit form
+// Add / edit form. Also used by the guest pages, with a form definition of their own.
 // ---------------------------------------------------------------------------
 
 function optionsHtml(f, ctx, selected) {
@@ -1124,7 +1441,7 @@ function optionsHtml(f, ctx, selected) {
   else if (f.ref) options = [...state[f.ref]].sort(byLabel).map((r) => ({ value: r.id, label: r.label }));
   else options = f.choices.map((c) => ({ value: c, label: c }));
 
-  const blank = f.choices || f.noBlank ? '' : `<option value="">${f.required ? 'Select…' : '— None —'}</option>`;
+  const blank = f.choices || f.noBlank ? '' : `<option value="">${f.blank ?? (f.required ? 'Select…' : '— None —')}</option>`;
   return (
     blank +
     options.map((o) => `<option value="${esc(o.value)}"${o.value === selected ? ' selected' : ''}>${esc(o.label)}</option>`).join('')
@@ -1139,12 +1456,13 @@ function fieldHtml(f, value, ctx) {
   if (f.ref || f.choices || f.options) {
     control = `<select ${common}>${optionsHtml(f, ctx, value)}</select>`;
   } else if (f.type === 'textarea') {
-    control = `<textarea ${common} rows="3" maxlength="2000">${esc(value)}</textarea>`;
+    control = `<textarea ${common} rows="${f.rows ?? 3}" maxlength="2000">${esc(value)}</textarea>`;
   } else {
     const type = f.type ?? 'text';
     let attrs = '';
     if (type === 'number') attrs = ` min="${f.min ?? 0}" step="${f.step ?? 'any'}"`;
     else attrs = ' maxlength="200"';
+    if (f.minDate) attrs += ` min="${f.minDate()}"`;
     control = `<input type="${type}" ${common} value="${esc(value)}"${attrs}>`;
   }
   const group = f.group ? ` data-group="${f.group}"` : '';
@@ -1161,9 +1479,11 @@ function closeDialog() {
   }, 200);
 }
 
+// `target` is a record type's name, or a form definition (fields plus a submit function) of its own.
 // `preset` fills in a new record, for example the room and night clicked on the calendar.
-function openForm(name, rec = null, preset = {}) {
-  const ent = ENTITIES[name];
+function openForm(target, rec = null, preset = {}) {
+  const ent = typeof target === 'string' ? ENTITIES[target] : target;
+  const name = typeof target === 'string' ? target : null;
   const isNew = !rec;
 
   const values = {};
@@ -1174,10 +1494,12 @@ function openForm(name, rec = null, preset = {}) {
     else values[f.key] = f.initial ? f.initial() : f.choices ? f.choices[0] : '';
   }
   const initialCtx = { rec: rec ?? {}, preset, val: (k) => values[k] };
+  const heading = ent.title ? ent.title(isNew) : isNew ? ent.addLabel : `Edit ${ent.singular.toLowerCase()}`;
 
   dialog.innerHTML = `
     <form id="form">
-      <h2>${isNew ? esc(ent.addLabel) : `Edit ${esc(ent.singular.toLowerCase())}`}</h2>
+      <h2>${esc(heading)}</h2>
+      ${ent.intro ? `<div class="dialog-intro">${ent.intro(rec, preset)}</div>` : ''}
       <div class="fields">${ent.fields.map((f) => fieldHtml(f, values[f.key], initialCtx)).join('')}</div>
       <p class="form-error" role="alert"></p>
       <div class="form-actions">
@@ -1187,6 +1509,7 @@ function openForm(name, rec = null, preset = {}) {
     </form>`;
 
   const form = $('#form', dialog);
+  form._rec = rec;
   const errorEl = $('.form-error', form);
   const submitBtn = $('button[type="submit"]', form);
   $('[data-close]', form).addEventListener('click', closeDialog);
@@ -1201,10 +1524,13 @@ function openForm(name, rec = null, preset = {}) {
     try {
       let body = Object.fromEntries(new FormData(form));
       if (ent.toBody) body = ent.toBody(body);
-      await api(isNew ? 'POST' : 'PUT', `/api/${name}${isNew ? '' : `/${rec.id}`}`, body);
+      const saved = ent.submit
+        ? await ent.submit(body, rec, isNew)
+        : await api(isNew ? 'POST' : 'PUT', `/api/${name}${isNew ? '' : `/${rec.id}`}`, body);
       closeDialog();
-      toast(isNew ? `${ent.singular} saved` : 'Changes saved');
-      await route();
+      toast(ent.toast ?? (isNew ? `${ent.singular} saved` : 'Changes saved'));
+      if (ent.afterSave) ent.afterSave(saved);
+      else await route();
     } catch (err) {
       if (err.status !== 401) errorEl.textContent = err.message;
     } finally {

@@ -306,6 +306,101 @@ test('records can be edited', async () => {
   });
 });
 
+test('a pending booking holds its room until it is confirmed or declined', async () => {
+  await withApp(async ({ call, room, guest, book }) => {
+    const r = await room('1001');
+    const g = await guest();
+    const pending = (await book(r.id, g.id, day(10), day(12), { status: 'Pending' })).body;
+    assert.equal(pending.status, 'Pending');
+
+    assert.equal((await book(r.id, g.id, day(11), day(13))).status, 409); // the room is held
+    const free = (await call('GET', `/api/availability?checkIn=${day(10)}&checkOut=${day(12)}`)).body.rooms;
+    assert.equal(free.length, 0);
+
+    // A pending booking is not an arrival yet, and it is not a guest in the house.
+    const dash = (await call('GET', `/api/dashboard?today=${day(10)}`)).body;
+    assert.equal(dash.arrivals.length, 0);
+    assert.equal(dash.requests.bookings, 1);
+    assert.equal(dash.pendingBookings[0].id, pending.id);
+    assert.equal(dash.occupiedTonight, 1); // but the room is spoken for
+
+    const move = async (status) => (await call('POST', `/api/bookings/${pending.id}/status`, { status })).status;
+    assert.equal(await move('Checked in'), 409); // must be confirmed first
+    assert.equal(await move('Confirmed'), 200);
+    assert.equal((await call('GET', `/api/dashboard?today=${day(10)}`)).body.arrivals.length, 1);
+    assert.equal((await call('GET', `/api/dashboard?today=${day(10)}`)).body.requests.bookings, 0);
+  });
+});
+
+test('services, service requests and inquiries are managed like the rest', async () => {
+  await withApp(async ({ call, room, guest, book }) => {
+    const g = await guest('Service Guest');
+    const other = await guest('Other Guest');
+    const r = await room('1101');
+    const stay = (await book(r.id, other.id, day(10), day(12))).body;
+
+    const service = (await call('POST', '/api/services', { name: 'Breakfast', price: 12, unit: 'per person' })).body;
+    assert.equal(service.status, 'Available');
+    assert.equal((await call('POST', '/api/services', { name: 'Free', price: -1 })).status, 400);
+
+    // A service request defaults to the service's price, and may only be charged to the guest's own stay.
+    const order = await call('POST', '/api/serviceOrders', { guestId: g.id, serviceId: service.id, date: day(10), quantity: 2 });
+    assert.equal(order.status, 201);
+    assert.equal(order.body.unitPrice, 12);
+    assert.equal(order.body.total, 24);
+    assert.equal(order.body.status, 'Requested');
+    const wrongStay = await call('POST', '/api/serviceOrders', { guestId: g.id, serviceId: service.id, date: day(10), bookingId: stay.id });
+    assert.equal(wrongStay.status, 400);
+    assert.match(wrongStay.body.error, /different guest/);
+    const repriced = await call('PUT', `/api/serviceOrders/${order.body.id}`, { ...order.body, unitPrice: 10 });
+    assert.equal(repriced.body.total, 20);
+
+    const inquiry = (await call('POST', '/api/inquiries', { guestId: g.id, subject: 'Late check-out', message: 'Can we leave at 3pm?' })).body;
+    assert.equal(inquiry.status, 'Open');
+    await call('POST', '/api/inquiries', { guestId: g.id, subject: 'Parking', message: 'Is there parking?' });
+
+    // Nothing can be deleted out from under what refers to it.
+    const noService = await call('DELETE', `/api/services/${service.id}`);
+    assert.equal(noService.status, 409);
+    assert.match(noService.body.error, /1 service request still references it/);
+    const noGuest = await call('DELETE', `/api/guests/${g.id}`);
+    assert.equal(noGuest.status, 409);
+    assert.match(noGuest.body.error, /1 service request still references it/);
+    assert.equal((await call('DELETE', `/api/bookings/${stay.id}`)).status, 204);
+
+    assert.equal((await call('DELETE', `/api/serviceOrders/${order.body.id}`)).status, 204);
+    assert.equal((await call('DELETE', `/api/services/${service.id}`)).status, 204);
+    const stillAsked = await call('DELETE', `/api/guests/${g.id}`);
+    assert.equal(stillAsked.status, 409);
+    assert.match(stillAsked.body.error, /2 inquiries still reference it/);
+  });
+});
+
+test('service requests and inquiries move along allowed steps', async () => {
+  await withApp(async ({ call, guest }) => {
+    const g = await guest();
+    const service = (await call('POST', '/api/services', { name: 'Laundry', price: 15 })).body;
+    const order = (await call('POST', '/api/serviceOrders', { guestId: g.id, serviceId: service.id, date: day(10) })).body;
+    const moveOrder = async (status) => (await call('POST', `/api/serviceOrders/${order.id}/status`, { status })).status;
+    assert.equal(await moveOrder('Completed'), 409); // not confirmed yet
+    assert.equal(await moveOrder('Confirmed'), 200);
+    assert.equal(await moveOrder('Completed'), 200);
+    assert.equal(await moveOrder('Cancelled'), 409); // done is done
+
+    const declined = (await call('POST', '/api/serviceOrders', { guestId: g.id, serviceId: service.id, date: day(10) })).body;
+    assert.equal((await call('POST', `/api/serviceOrders/${declined.id}/status`, { status: 'Declined' })).status, 200);
+    assert.equal((await call('POST', `/api/serviceOrders/${declined.id}/status`, { status: 'Requested' })).status, 200); // can be reopened
+
+    const inquiry = (await call('POST', '/api/inquiries', { guestId: g.id, subject: 'Hi', message: 'Hello' })).body;
+    const moveInquiry = async (status) => (await call('POST', `/api/inquiries/${inquiry.id}/status`, { status })).status;
+    assert.equal(await moveInquiry('Answered'), 409); // answering is done by replying
+    assert.equal(await moveInquiry('Closed'), 200);
+    assert.equal(await moveInquiry('Open'), 200);
+    assert.equal((await call('POST', `/api/inquiries/${inquiry.id}/reply`, { reply: 'Hello back' })).body.status, 'Answered');
+    assert.equal((await call('GET', '/api/inquiries/x/reply')).status, 404);
+  });
+});
+
 test('data persists across restarts, and records from other versions are kept', async () => {
   const prepare = (file) =>
     fs.writeFileSync(file, JSON.stringify({ properties: [{ id: 'old', name: 'Rental from the earlier app' }], guests: [] }));
