@@ -3,8 +3,9 @@
 // The app shell, the sign-in screens, and everything the hotel's management sees.
 // The guest pages live in portal.js, which is loaded first and only run from here.
 
-const CURRENCY = 'USD';
-const money = new Intl.NumberFormat(undefined, { style: 'currency', currency: CURRENCY });
+// Philippine peso, written the Philippine way (₱4,750.00) whatever language the browser is set to.
+const CURRENCY = 'PHP';
+const money = new Intl.NumberFormat('en-PH', { style: 'currency', currency: CURRENCY });
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) =>

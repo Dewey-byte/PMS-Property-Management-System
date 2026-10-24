@@ -118,7 +118,7 @@ Set these environment variables before `npm start`:
 | `DATA_FILE` | `data/db.json` | Where records are stored when no Redis database is configured. Accounts go beside it, in `db.users.json`. Back both up. |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | not set | Use a Redis database (Upstash) instead of files. Vercel sets these when you connect the database. `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` work too. |
 
-The currency is the `CURRENCY` constant at the top of `public/app.js`.
+All prices are in Philippine pesos (₱). To use another currency, change the `CURRENCY` code and the locale just below it at the top of `public/app.js`; the amounts you enter are stored as plain numbers either way. The demo hotel's prices are written in pesos too.
 
 **Time zones:** "today" (for arrivals, departures and tonight's occupancy) is taken from the browser, not the server, so it follows your hotel's local date even when the server runs in another time zone.
 

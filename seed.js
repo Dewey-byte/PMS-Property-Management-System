@@ -8,6 +8,23 @@ const crypto = require('node:crypto');
 const { createStore, localDate } = require('./server');
 const { storageFromEnv } = require('./storage');
 
+// The prices in fill() are small round numbers, so the sums stay easy to check (3 nights at 95 is 285).
+// Before saving, they are multiplied up into pesos: 95 becomes 4,750 a night.
+const PESOS_PER_UNIT = 50;
+const PRICE_FIELDS = {
+  rooms: ['rate'],
+  bookings: ['nightlyRate'],
+  payments: ['amount'],
+  services: ['price'],
+  serviceOrders: ['unitPrice'],
+};
+
+function toPesos(data) {
+  for (const [collection, fields] of Object.entries(PRICE_FIELDS)) {
+    for (const record of data[collection]) for (const field of fields) record[field] *= PESOS_PER_UNIT;
+  }
+}
+
 const shift = (days) => {
   const d = new Date();
   d.setDate(d.getDate() + days);
@@ -159,6 +176,7 @@ async function main() {
   for (const key of Object.keys(data)) data[key] = [];
 
   fill(data);
+  toPesos(data);
   await store.save();
   const counts = Object.entries(data).map(([k, v]) => `${v.length} ${k}`).join(', ');
   console.log(`Seeded ${storage.description}: ${counts}`);
