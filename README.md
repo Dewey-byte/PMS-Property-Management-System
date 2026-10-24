@@ -42,7 +42,7 @@ Business rules the app enforces:
 
 Vercel runs the app as short-lived serverless functions with no lasting disk, so the data and the account must live in a database. The app uses **Upstash Redis**, which Vercel offers with a free plan.
 
-1. Put the project on GitHub and import it into Vercel (**Framework Preset: Other**; no build command needed).
+1. Put the project on GitHub and import it into Vercel. Leave the preset on **Node**, which Vercel detects on its own; no build command is needed. (The Vercel GitHub app must be allowed to see the repository.)
 2. In the Vercel project, open **Storage** (or the Marketplace), add **Upstash Redis**, and connect it to the project for all environments. This adds the variables `KV_REST_API_URL` and `KV_REST_API_TOKEN`.
 3. **Redeploy.** Variables only apply to new deployments.
 4. Open the site and create your account.
