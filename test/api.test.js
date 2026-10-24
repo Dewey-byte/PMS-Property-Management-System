@@ -7,15 +7,31 @@ const os = require('node:os');
 const path = require('node:path');
 const { createServer, localDate } = require('../server');
 
+const CREDENTIALS = { username: 'admin', password: 'test-password-123' };
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
 let server;
 let base;
 let dir;
+let cookie;
+
+// Creates (or signs in to) the account and returns the session cookie to send back.
+async function authenticate(baseUrl, action) {
+  const res = await fetch(`${baseUrl}/api/auth/${action}`, {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify(CREDENTIALS),
+  });
+  assert.ok(res.ok, `${action} failed with ${res.status}`);
+  return res.headers.getSetCookie()[0].split(';')[0];
+}
 
 before(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pms-test-'));
   server = createServer(path.join(dir, 'db.json'));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
+  cookie = await authenticate(base, 'setup');
 });
 
 after(async () => {
@@ -26,7 +42,7 @@ after(async () => {
 async function call(method, url, body, headers = {}) {
   const res = await fetch(base + url, {
     method,
-    headers: body ? { 'Content-Type': 'application/json', ...headers } : headers,
+    headers: { Cookie: cookie, ...(body ? JSON_HEADERS : {}), ...headers },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
@@ -129,28 +145,37 @@ test('data persists across restarts', async () => {
   const file = path.join(dir, 'persist.json');
   const first = createServer(file);
   await new Promise((resolve) => first.listen(0, '127.0.0.1', resolve));
-  const url = `http://127.0.0.1:${first.address().port}/api/properties`;
-  await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Kept', address: 'x' }) });
+  const firstBase = `http://127.0.0.1:${first.address().port}`;
+  const firstCookie = await authenticate(firstBase, 'setup');
+  await fetch(`${firstBase}/api/properties`, {
+    method: 'POST',
+    headers: { ...JSON_HEADERS, Cookie: firstCookie },
+    body: JSON.stringify({ name: 'Kept', address: 'x' }),
+  });
   await new Promise((resolve) => first.close(resolve));
 
+  // Sessions end with the process, but the account and the data survive.
   const second = createServer(file);
   await new Promise((resolve) => second.listen(0, '127.0.0.1', resolve));
-  const list = await (await fetch(`http://127.0.0.1:${second.address().port}/api/properties`)).json();
+  const secondBase = `http://127.0.0.1:${second.address().port}`;
+  assert.equal((await fetch(`${secondBase}/api/properties`, { headers: { Cookie: firstCookie } })).status, 401);
+  const secondCookie = await authenticate(secondBase, 'login');
+  const list = await (await fetch(`${secondBase}/api/properties`, { headers: { Cookie: secondCookie } })).json();
   await new Promise((resolve) => second.close(resolve));
   assert.deepEqual(list.map((p) => p.name), ['Kept']);
 });
 
 test('request hardening', async () => {
-  const wrongType = await fetch(`${base}/api/properties`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{}' });
+  const wrongType = await fetch(`${base}/api/properties`, { method: 'POST', headers: { 'Content-Type': 'text/plain', Cookie: cookie }, body: '{}' });
   assert.equal(wrongType.status, 415);
 
   const crossOrigin = await call('POST', '/api/properties', { name: 'Evil', address: 'x' }, { Origin: 'http://evil.example' });
   assert.equal(crossOrigin.status, 403);
 
-  const huge = await fetch(`${base}/api/properties`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'x'.repeat(100_000) }) });
+  const huge = await fetch(`${base}/api/properties`, { method: 'POST', headers: { ...JSON_HEADERS, Cookie: cookie }, body: JSON.stringify({ name: 'x'.repeat(100_000) }) });
   assert.equal(huge.status, 413);
 
-  const badJson = await fetch(`${base}/api/properties`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{nope' });
+  const badJson = await fetch(`${base}/api/properties`, { method: 'POST', headers: { ...JSON_HEADERS, Cookie: cookie }, body: '{nope' });
   assert.equal(badJson.status, 400);
 
   assert.equal((await call('GET', '/api/__proto__')).status, 404);

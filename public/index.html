@@ -1,23 +1,45 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>PMS · Property Management</title>
+  <script src="theme.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="app">
-    <aside class="sidebar">
-      <a class="brand" href="#/dashboard"><span class="brand-mark">P</span><span>PMS</span></a>
+  <div class="bg" aria-hidden="true"><span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span></div>
+
+  <div id="boot" class="boot" aria-label="Loading"><span class="logo pulse" data-icon="properties"></span></div>
+
+  <section id="auth" class="auth" hidden></section>
+
+  <div id="shell" class="app" hidden>
+    <aside class="sidebar glass">
+      <a class="brand" href="#/dashboard"><span class="logo" data-icon="properties"></span><span class="brand-name">PMS</span></a>
       <nav id="nav" aria-label="Main"></nav>
+      <div class="side-foot">
+        <div class="user">
+          <span class="avatar" id="avatar" aria-hidden="true"></span>
+          <span class="user-name" id="username"></span>
+        </div>
+        <button type="button" class="icon-btn theme-toggle" aria-label="Switch colour theme"></button>
+        <button type="button" class="icon-btn" id="logout" aria-label="Sign out" title="Sign out"></button>
+      </div>
     </aside>
 
     <main>
       <header class="topbar">
-        <h1 id="title">Dashboard</h1>
+        <div class="titles">
+          <h1 id="title">Dashboard</h1>
+          <p id="subtitle" class="subtitle"></p>
+        </div>
         <div class="topbar-actions">
-          <input id="search" type="search" placeholder="Search…" aria-label="Search" hidden>
+          <label class="search" id="search-wrap" hidden>
+            <span class="search-icon" data-icon="search"></span>
+            <input id="search" type="search" placeholder="Search…" aria-label="Search">
+          </label>
           <button id="add" class="btn primary" type="button" hidden></button>
         </div>
       </header>

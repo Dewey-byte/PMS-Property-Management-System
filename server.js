@@ -4,9 +4,10 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { createAuth } = require('./auth');
+const { HttpError, SECURITY_HEADERS, sendJson, readJson, assertSameOrigin } = require('./http-utils');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const MAX_BODY_BYTES = 64 * 1024;
 const EXPIRY_WARNING_DAYS = 60;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -21,12 +22,6 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
-};
-
-const SECURITY_HEADERS = {
-  'Content-Security-Policy': "default-src 'self'; frame-ancestors 'none'; form-action 'self'",
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
 };
 
 // ---------------------------------------------------------------------------
@@ -118,13 +113,6 @@ const RULES = {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
 
 const pad = (n) => String(n).padStart(2, '0');
 const localDate = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -377,55 +365,6 @@ function buildView(data) {
 // HTTP layer
 // ---------------------------------------------------------------------------
 
-function sendJson(res, status, body) {
-  const buf = Buffer.from(JSON.stringify(body));
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': buf.length,
-    'Cache-Control': 'no-store',
-    ...SECURITY_HEADERS,
-  });
-  res.end(buf);
-}
-
-function readJson(req) {
-  if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
-    throw new HttpError(415, 'Content-Type must be application/json');
-  }
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
-    req.on('data', (chunk) => {
-      size += chunk.length;
-      if (size <= MAX_BODY_BYTES) chunks.push(chunk);
-    });
-    req.on('end', () => {
-      if (size > MAX_BODY_BYTES) return reject(new HttpError(413, 'Request body too large'));
-      try {
-        const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-        if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new Error('not an object');
-        resolve(body);
-      } catch {
-        reject(new HttpError(400, 'Request body must be a JSON object'));
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
-// Block cross-site requests: browsers always send Origin on cross-site writes.
-function assertSameOrigin(req) {
-  const origin = req.headers.origin;
-  if (!origin) return;
-  let host;
-  try {
-    host = new URL(origin).host;
-  } catch {
-    host = null;
-  }
-  if (host !== req.headers.host) throw new HttpError(403, 'Cross-origin request blocked');
-}
-
 async function handleApi(req, res, url, store) {
   let parts;
   try {
@@ -503,6 +442,8 @@ async function serveStatic(req, res, url) {
 
 function createServer(dataFile) {
   const store = createStore(dataFile);
+  // Accounts are kept beside the data file, e.g. db.json -> db.users.json.
+  const auth = createAuth(`${dataFile.replace(/\.json$/i, '')}.users.json`);
   return http.createServer((req, res) => {
     (async () => {
       let url;
@@ -511,7 +452,13 @@ function createServer(dataFile) {
       } catch {
         throw new HttpError(400, 'Bad request');
       }
-      if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return handleApi(req, res, url, store);
+      if (url.pathname === '/api/auth' || url.pathname.startsWith('/api/auth/')) {
+        return auth.handle(req, res, url.pathname.slice('/api/auth/'.length));
+      }
+      if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
+        auth.requireUser(req);
+        return handleApi(req, res, url, store);
+      }
       return serveStatic(req, res, url);
     })().catch((err) => {
       const status = err instanceof HttpError ? err.status : 500;
