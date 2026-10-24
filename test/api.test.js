@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createServer, localDate } = require('../server');
+const { fileStorage } = require('../storage');
 
 const CREDENTIALS = { username: 'admin', password: 'test-password-123' };
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
@@ -28,7 +29,7 @@ async function authenticate(baseUrl, action) {
 
 before(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pms-test-'));
-  server = createServer(path.join(dir, 'db.json'));
+  server = createServer(fileStorage(path.join(dir, 'db.json')));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
   cookie = await authenticate(base, 'setup');
@@ -143,7 +144,7 @@ test('maintenance unit must belong to the chosen property', async () => {
 
 test('data persists across restarts', async () => {
   const file = path.join(dir, 'persist.json');
-  const first = createServer(file);
+  const first = createServer(fileStorage(file));
   await new Promise((resolve) => first.listen(0, '127.0.0.1', resolve));
   const firstBase = `http://127.0.0.1:${first.address().port}`;
   const firstCookie = await authenticate(firstBase, 'setup');
@@ -154,13 +155,11 @@ test('data persists across restarts', async () => {
   });
   await new Promise((resolve) => first.close(resolve));
 
-  // Sessions end with the process, but the account and the data survive.
-  const second = createServer(file);
+  // Sessions are signed cookies, so the same sign-in still works after a restart, along with the data.
+  const second = createServer(fileStorage(file));
   await new Promise((resolve) => second.listen(0, '127.0.0.1', resolve));
   const secondBase = `http://127.0.0.1:${second.address().port}`;
-  assert.equal((await fetch(`${secondBase}/api/properties`, { headers: { Cookie: firstCookie } })).status, 401);
-  const secondCookie = await authenticate(secondBase, 'login');
-  const list = await (await fetch(`${secondBase}/api/properties`, { headers: { Cookie: secondCookie } })).json();
+  const list = await (await fetch(`${secondBase}/api/properties`, { headers: { Cookie: firstCookie } })).json();
   await new Promise((resolve) => second.close(resolve));
   assert.deepEqual(list.map((p) => p.name), ['Kept']);
 });

@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { createAuth } = require('./auth');
+const { storageFromEnv, createLock } = require('./storage');
 const { HttpError, SECURITY_HEADERS, sendJson, readJson, assertSameOrigin } = require('./http-utils');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -143,25 +144,19 @@ function fieldLabel(key) {
 }
 
 // ---------------------------------------------------------------------------
-// Storage: one JSON file, loaded at startup and rewritten atomically on change.
+// Store: the property data, held in memory for the length of one request.
 // ---------------------------------------------------------------------------
 
-function createStore(file) {
+function createStore(storage) {
   const data = Object.fromEntries(COLLECTIONS.map((c) => [c, []]));
-  try {
-    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-    for (const c of COLLECTIONS) if (Array.isArray(saved[c])) data[c] = saved[c];
-  } catch (err) {
-    if (err.code !== 'ENOENT') throw new Error(`Cannot read ${file}: ${err.message}`);
-  }
   return {
     data,
-    save() {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      const tmp = `${file}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-      fs.renameSync(tmp, file);
+    // Re-read before every request: another serverless instance may have saved since the last one.
+    async load() {
+      const saved = (await storage.read('data')) ?? {};
+      for (const c of COLLECTIONS) data[c] = Array.isArray(saved[c]) ? saved[c] : [];
     },
+    save: () => storage.write('data', data),
   };
 }
 
@@ -222,23 +217,23 @@ function validate(collection, input, data) {
   return out;
 }
 
-function saveRecord(store, collection, input, existing) {
+async function saveRecord(store, collection, input, existing) {
   const { data } = store;
   const value = validate(collection, input, data);
   RULES[collection]?.(value, data, existing?.id);
   const now = new Date().toISOString();
   if (existing) {
     Object.assign(existing, value, { updatedAt: now });
-    store.save();
+    await store.save();
     return existing;
   }
   const record = { id: crypto.randomUUID(), ...value, createdAt: now, updatedAt: now };
   data[collection].push(record);
-  store.save();
+  await store.save();
   return record;
 }
 
-function removeRecord(store, collection, record) {
+async function removeRecord(store, collection, record) {
   const { data } = store;
   for (const [dep, key, noun] of DEPENDENTS[collection]) {
     const n = data[dep].filter((r) => r[key] === record.id).length;
@@ -247,7 +242,7 @@ function removeRecord(store, collection, record) {
     }
   }
   data[collection] = data[collection].filter((r) => r !== record);
-  store.save();
+  await store.save();
 }
 
 // ---------------------------------------------------------------------------
@@ -391,7 +386,7 @@ async function handleApi(req, res, url, store) {
       return sendJson(res, 200, data[collection].map((r) => view.decorate(collection, r)));
     }
     if (method === 'POST') {
-      const record = saveRecord(store, collection, await readJson(req), null);
+      const record = await saveRecord(store, collection, await readJson(req), null);
       return sendJson(res, 201, present(record));
     }
     throw new HttpError(405, 'Method not allowed');
@@ -401,14 +396,37 @@ async function handleApi(req, res, url, store) {
   if (!record) throw new HttpError(404, 'Record not found');
 
   if (method === 'GET') return sendJson(res, 200, present(record));
-  if (method === 'PUT') return sendJson(res, 200, present(saveRecord(store, collection, await readJson(req), record)));
+  if (method === 'PUT') return sendJson(res, 200, present(await saveRecord(store, collection, await readJson(req), record)));
   if (method === 'DELETE') {
-    removeRecord(store, collection, record);
+    await removeRecord(store, collection, record);
     res.writeHead(204, { 'Cache-Control': 'no-store', ...SECURITY_HEADERS });
     return res.end();
   }
   throw new HttpError(405, 'Method not allowed');
 }
+
+// On Vercel the browser files travel inside the function. Each path is written out in full on purpose:
+// bundlers work out which files a function needs by reading the code. A new file in public/ must be added here
+// (a test fails if one is missing).
+function readBundledAssets() {
+  const optional = (read) => {
+    try {
+      return read();
+    } catch (err) {
+      console.warn(`Browser file missing from the deployment: ${err.message}`);
+      return null;
+    }
+  };
+  return new Map(
+    [
+      ['/index.html', optional(() => fs.readFileSync(path.join(__dirname, 'public', 'index.html')))],
+      ['/style.css', optional(() => fs.readFileSync(path.join(__dirname, 'public', 'style.css')))],
+      ['/app.js', optional(() => fs.readFileSync(path.join(__dirname, 'public', 'app.js')))],
+      ['/theme.js', optional(() => fs.readFileSync(path.join(__dirname, 'public', 'theme.js')))],
+    ].filter(([, body]) => body),
+  );
+}
+const BUNDLED_ASSETS = process.env.VERCEL ? readBundledAssets() : null;
 
 async function serveStatic(req, res, url) {
   if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Method not allowed');
@@ -421,18 +439,22 @@ async function serveStatic(req, res, url) {
   if (rel.includes('\0')) throw new HttpError(400, 'Bad request');
   if (rel.endsWith('/')) rel += 'index.html';
 
-  const file = path.join(PUBLIC_DIR, rel);
-  if (!file.startsWith(PUBLIC_DIR + path.sep)) throw new HttpError(403, 'Forbidden');
-
   let body;
-  try {
-    body = await fs.promises.readFile(file);
-  } catch (err) {
-    if (err.code === 'ENOENT' || err.code === 'EISDIR') throw new HttpError(404, 'Not found');
-    throw err;
+  if (BUNDLED_ASSETS) {
+    body = BUNDLED_ASSETS.get(rel);
+    if (!body) throw new HttpError(404, 'Not found');
+  } else {
+    const file = path.join(PUBLIC_DIR, rel);
+    if (!file.startsWith(PUBLIC_DIR + path.sep)) throw new HttpError(403, 'Forbidden');
+    try {
+      body = await fs.promises.readFile(file);
+    } catch (err) {
+      if (err.code === 'ENOENT' || err.code === 'EISDIR') throw new HttpError(404, 'Not found');
+      throw err;
+    }
   }
   res.writeHead(200, {
-    'Content-Type': MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream',
+    'Content-Type': MIME[path.extname(rel).toLowerCase()] ?? 'application/octet-stream',
     'Content-Length': body.length,
     'Cache-Control': 'no-cache',
     ...SECURITY_HEADERS,
@@ -440,11 +462,13 @@ async function serveStatic(req, res, url) {
   res.end(req.method === 'HEAD' ? undefined : body);
 }
 
-function createServer(dataFile) {
-  const store = createStore(dataFile);
-  // Accounts are kept beside the data file, e.g. db.json -> db.users.json.
-  const auth = createAuth(`${dataFile.replace(/\.json$/i, '')}.users.json`);
-  return http.createServer((req, res) => {
+// Builds the (req, res) handler that serves the API and the browser files, keeping its data in `storage`.
+function createRequestHandler(storage) {
+  const store = createStore(storage);
+  const auth = createAuth(storage);
+  const exclusive = createLock();
+
+  return (req, res) =>
     (async () => {
       let url;
       try {
@@ -456,8 +480,12 @@ function createServer(dataFile) {
         return auth.handle(req, res, url.pathname.slice('/api/auth/'.length));
       }
       if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
-        auth.requireUser(req);
-        return handleApi(req, res, url, store);
+        await auth.requireUser(req);
+        // One API request at a time per process, so a read-modify-write can't interleave with another.
+        return exclusive(async () => {
+          await store.load();
+          await handleApi(req, res, url, store);
+        });
       }
       return serveStatic(req, res, url);
     })().catch((err) => {
@@ -466,30 +494,53 @@ function createServer(dataFile) {
       if (res.headersSent) return res.destroy();
       sendJson(res, status, { error: status === 500 ? 'Internal server error' : err.message });
     });
-  });
 }
 
-module.exports = { createServer, createStore, localDate };
+const createServer = (storage) => http.createServer(createRequestHandler(storage));
+
+// What a serverless host such as Vercel imports: a plain request handler that sets itself up on first use.
+// If storage isn't configured it answers with the reason instead of crashing.
+let envHandler;
+function handler(req, res) {
+  if (!envHandler) {
+    try {
+      envHandler = createRequestHandler(storageFromEnv());
+    } catch (err) {
+      console.error(err);
+      res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8', ...SECURITY_HEADERS });
+      return res.end(err.message);
+    }
+  }
+  return envHandler(req, res);
+}
+
+module.exports = handler;
+Object.assign(handler, { createServer, createRequestHandler, createStore, localDate, readBundledAssets });
 
 if (require.main === module) {
-  const port = Number(process.env.PORT) || 3000;
-  // Loopback by default: there is no login, so don't expose it to the network unless asked.
-  const host = process.env.HOST || '127.0.0.1';
-  const dataFile = process.env.DATA_FILE || path.join(__dirname, 'data', 'db.json');
+  (async () => {
+    const port = Number(process.env.PORT) || 3000;
+    // Loopback by default: only this computer can reach it unless HOST says otherwise.
+    const host = process.env.HOST || '127.0.0.1';
 
-  let server;
-  try {
-    server = createServer(dataFile);
-  } catch (err) {
-    console.error(err.message);
-    process.exit(1);
-  }
-  server.on('error', (err) => {
-    console.error(err.code === 'EADDRINUSE' ? `Port ${port} is already in use. Set PORT to use another.` : err.message);
-    process.exit(1);
-  });
-  server.listen(port, host, () => {
-    console.log(`PMS running at http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
-    console.log(`Data file: ${dataFile}`);
-  });
+    let storage;
+    try {
+      storage = storageFromEnv();
+      // Fail now, with a clear message, if stored data can't be read.
+      await Promise.all([storage.read('data'), storage.read('users')]);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+
+    const server = createServer(storage);
+    server.on('error', (err) => {
+      console.error(err.code === 'EADDRINUSE' ? `Port ${port} is already in use. Set PORT to use another.` : err.message);
+      process.exit(1);
+    });
+    server.listen(port, host, () => {
+      console.log(`PMS running at http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
+      console.log(`Storing data in ${storage.description}`);
+    });
+  })();
 }

@@ -2,10 +2,12 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createServer } = require('../server');
+const { fileStorage } = require('../storage');
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 const ALICE = { username: 'Alice', password: 'correct horse battery' };
@@ -14,7 +16,7 @@ const ALICE = { username: 'Alice', password: 'correct horse battery' };
 async function withServer(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pms-auth-'));
   const dataFile = path.join(dir, 'db.json');
-  const server = createServer(dataFile);
+  const server = createServer(fileStorage(dataFile));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   const post = (action, body, headers = {}) =>
@@ -52,7 +54,7 @@ test('first-run setup creates the account, signs in, and then closes', async () 
     const res = await post('setup', ALICE);
     assert.equal(res.status, 201);
     const cookie = sessionCookie(res);
-    assert.match(cookie, /^pms_session=[0-9a-f]{64};/);
+    assert.match(cookie, /^pms_session=[\w-]+\.[\w-]+;/);
     assert.match(cookie, /HttpOnly/);
     assert.match(cookie, /SameSite=Strict/);
 
@@ -97,6 +99,50 @@ test('logout ends the session on the server, not just in the browser', async () 
     assert.equal(out.status, 200);
     assert.match(sessionCookie(out), /Max-Age=0/);
     assert.equal((await fetch(`${base}/api/properties`, { headers })).status, 401);
+  });
+});
+
+test('signing out ends every session for the account', async () => {
+  await withServer(async ({ base, post }) => {
+    const laptop = cookieHeader(await post('setup', ALICE));
+    const phone = cookieHeader(await post('login', ALICE));
+    assert.equal((await fetch(`${base}/api/properties`, { headers: laptop })).status, 200);
+    assert.equal((await fetch(`${base}/api/properties`, { headers: phone })).status, 200);
+
+    await post('logout', {}, phone);
+    assert.equal((await fetch(`${base}/api/properties`, { headers: laptop })).status, 401);
+
+    // Signing in again works and gets a working session.
+    const again = cookieHeader(await post('login', ALICE));
+    assert.equal((await fetch(`${base}/api/properties`, { headers: again })).status, 200);
+  });
+});
+
+test('forged, tampered and expired session cookies are rejected', async () => {
+  await withServer(async ({ base, post, dataFile }) => {
+    const res = await post('setup', ALICE);
+    const token = sessionCookie(res).split(';')[0].slice('pms_session='.length);
+    const [body, mac] = token.split('.');
+    const status = (cookie) => fetch(`${base}/api/properties`, { headers: { Cookie: `pms_session=${cookie}` } }).then((r) => r.status);
+
+    assert.equal(await status(token), 200);
+    assert.equal(await status(`${body}.${mac.slice(0, -2)}AA`), 401); // signature altered
+    assert.equal(await status(`${body}x.${mac}`), 401); // payload altered
+    assert.equal(await status(body), 401); // signature missing
+    assert.equal(await status('garbage'), 401);
+
+    // Signed with the wrong key, or correctly signed but already past its expiry.
+    const sign = (secret, payload) => {
+      const b = Buffer.from(JSON.stringify(payload)).toString('base64url');
+      return `${b}.${crypto.createHmac('sha256', secret).update(b).digest('base64url')}`;
+    };
+    const live = { u: 'Alice', v: 0, e: Date.now() + 60_000 };
+    assert.equal(await status(sign('not the secret', live)), 401);
+
+    const { secret } = JSON.parse(fs.readFileSync(dataFile.replace(/\.json$/, '.users.json'), 'utf8'));
+    assert.equal(await status(sign(secret, live)), 200);
+    assert.equal(await status(sign(secret, { ...live, e: Date.now() - 1 })), 401);
+    assert.equal(await status(sign(secret, { ...live, u: 'Mallory' })), 401);
   });
 });
 
