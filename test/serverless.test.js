@@ -74,16 +74,16 @@ test('two separate instances sharing one Redis database behave like one app', as
     assert.equal(setup.status, 201);
     const cookie = cookieOf(setup);
 
-    assert.equal((await fetch(`${a.base}/api/properties`, post({ name: 'Shared', address: '1 St' }, cookie))).status, 201);
+    assert.equal((await fetch(`${a.base}/api/guests`, post({ name: 'Shared' }, cookie))).status, 201);
 
     // The other instance has never seen this session or this data, yet accepts the cookie and shows the record.
-    const list = await (await fetch(`${b.base}/api/properties`, { headers: { Cookie: cookie } })).json();
+    const list = await (await fetch(`${b.base}/api/guests`, { headers: { Cookie: cookie } })).json();
     assert.deepEqual(list.map((p) => p.name), ['Shared']);
     assert.equal((await fetch(`${b.base}/api/auth/login`, post(CREDS))).status, 200);
 
     // Signing out on one instance ends the session on the other.
     await fetch(`${b.base}/api/auth/logout`, post({}, cookie));
-    assert.equal((await fetch(`${a.base}/api/properties`, { headers: { Cookie: cookie } })).status, 401);
+    assert.equal((await fetch(`${a.base}/api/guests`, { headers: { Cookie: cookie } })).status, 401);
 
     assert.deepEqual([...redis.kv.keys()].sort(), ['pms:data', 'pms:users']);
     assert.ok(!redis.kv.get('pms:users').includes(CREDS.password));
@@ -99,7 +99,7 @@ test('requests without a session never reach the database', async () => {
   const app = await serve(createRequestHandler(redisStorage({ url: redis.url, token: redis.token })));
   try {
     const before = redis.requests.length;
-    assert.equal((await fetch(`${app.base}/api/properties`)).status, 401);
+    assert.equal((await fetch(`${app.base}/api/guests`)).status, 401);
     assert.equal((await fetch(`${app.base}/api/dashboard`, { method: 'GET' })).status, 401);
     assert.equal(redis.requests.length, before);
   } finally {
@@ -114,10 +114,10 @@ test('simultaneous writes in one instance are not lost', async () => {
   try {
     const cookie = cookieOf(await fetch(`${app.base}/api/auth/setup`, post(CREDS)));
     const created = await Promise.all(
-      Array.from({ length: 15 }, (_, i) => fetch(`${app.base}/api/properties`, post({ name: `P${i}`, address: 'x' }, cookie))),
+      Array.from({ length: 15 }, (_, i) => fetch(`${app.base}/api/guests`, post({ name: `P${i}` }, cookie))),
     );
     assert.ok(created.every((r) => r.status === 201));
-    const list = await (await fetch(`${app.base}/api/properties`, { headers: { Cookie: cookie } })).json();
+    const list = await (await fetch(`${app.base}/api/guests`, { headers: { Cookie: cookie } })).json();
     assert.equal(list.length, 15);
   } finally {
     await app.close();
@@ -173,8 +173,9 @@ test('server.js default-exports a request handler, as Vercel requires', async ()
   });
 });
 
-test('on Vercel: serves the browser files from the bundle and works from environment variables', async () => {
+test('on Vercel: serves the browser files from the bundle and works from environment variables', async (t) => {
   const redis = await startFakeRedis();
+  t.after(() => redis.close());
   await withEnv(
     { VERCEL: '1', KV_REST_API_URL: redis.url, KV_REST_API_TOKEN: redis.token, UPSTASH_REDIS_REST_URL: undefined, UPSTASH_REDIS_REST_TOKEN: undefined },
     async (handler) => {
@@ -182,7 +183,7 @@ test('on Vercel: serves the browser files from the bundle and works from environ
       try {
         const index = await fetch(`${app.base}/`);
         assert.equal(index.status, 200);
-        assert.match(await index.text(), /<title>PMS/);
+        assert.match(await index.text(), /<title>Hotel PMS/);
         assert.equal((await fetch(`${app.base}/app.js`)).status, 200);
         assert.equal((await fetch(`${app.base}/missing.html`)).status, 404);
         assert.equal((await fetch(`${app.base}/..%2Fserver.js`)).status, 404);
@@ -197,11 +198,11 @@ test('on Vercel: serves the browser files from the bundle and works from environ
       }
     },
   );
-  await redis.close();
 });
 
-test('on Vercel: failed-login lockout follows the client address in X-Forwarded-For', async () => {
+test('on Vercel: failed-login lockout follows the client address in X-Forwarded-For', async (t) => {
   const redis = await startFakeRedis();
+  t.after(() => redis.close());
   await withEnv(
     { VERCEL: '1', KV_REST_API_URL: redis.url, KV_REST_API_TOKEN: redis.token, UPSTASH_REDIS_REST_URL: undefined, UPSTASH_REDIS_REST_TOKEN: undefined },
     async (handler) => {
@@ -218,7 +219,6 @@ test('on Vercel: failed-login lockout follows the client address in X-Forwarded-
       }
     },
   );
-  await redis.close();
 });
 
 test('on Vercel without a database: a clear message instead of a crash', async () => {

@@ -12,25 +12,34 @@ const today = () => {
   const d = new Date();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
-const fmtDate = (s) =>
-  s ? new Date(`${s}T00:00:00`).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
-const fmtMonth = (s) => {
-  if (!s) return '';
-  const [y, m] = s.split('-').map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
+// Dates are plain YYYY-MM-DD strings; whole-day arithmetic is done in UTC so daylight saving can't shift it.
+const addDays = (s, n) => {
+  const d = new Date(`${s}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
 };
+const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+const local = (s) => new Date(`${s}T00:00:00`);
+const fmtDate = (s) => (s ? local(s).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '');
+const fmtShort = (s) => (s ? local(s).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
+const fmtWeekday = (s) => local(s).toLocaleDateString(undefined, { weekday: 'short' });
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const byLabel = (a, b) => a.label.localeCompare(b.label, undefined, { numeric: true });
+const byNumber = (a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true });
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const BADGE_COLOR = {
-  Paid: 'green', Occupied: 'green', Active: 'green', Resolved: 'green',
-  Medium: 'blue', Open: 'blue',
-  Partial: 'amber', 'In Progress': 'amber', High: 'amber',
-  Unpaid: 'red', Urgent: 'red', Expired: 'red',
-  Low: 'gray', Vacant: 'gray', Ended: 'gray',
+  Confirmed: 'blue', 'Checked in': 'green', 'Checked out': 'gray', Cancelled: 'red',
+  Occupied: 'green', Reserved: 'amber', Vacant: 'gray', 'Out of service': 'red',
+  Paid: 'green', Active: 'green',
 };
 const badge = (text) => `<span class="badge ${BADGE_COLOR[text] ?? 'gray'}">${esc(text)}</span>`;
-const PRIORITY_RANK = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
+const STATUS_TOAST = {
+  'Checked in': 'Guest checked in',
+  'Checked out': 'Guest checked out',
+  Cancelled: 'Booking cancelled',
+  Confirmed: 'Booking reinstated',
+};
 
 // ---------------------------------------------------------------------------
 // Icons (inline SVG, drawn with the current text colour)
@@ -38,13 +47,17 @@ const PRIORITY_RANK = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
 
 const ICON_PATHS = {
   dashboard: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
-  properties: '<path d="M4 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/><path d="M16 9h2a2 2 0 0 1 2 2v10"/><path d="M3 21h18"/><path d="M8 7h4M8 11h4M8 15h4"/>',
-  units: '<path d="M5 21V4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v17"/><path d="M3 21h18"/><circle cx="15" cy="12" r="1"/>',
-  tenants: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M17.5 14.2A5 5 0 0 1 21.5 19"/>',
-  leases: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>',
+  calendar: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 3v3M16 3v3"/>',
+  bookings: '<rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4V3h6v1"/><path d="M9 13l2 2 4-4"/>',
+  rooms: '<path d="M3 19V6"/><path d="M3 15h18v4"/><path d="M21 15v-3a3 3 0 0 0-3-3h-8v6"/><circle cx="6.5" cy="11" r="1.7"/>',
+  guests: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M17.5 14.2A5 5 0 0 1 21.5 19"/>',
   payments: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/><path d="M6.5 15h3"/>',
-  maintenance: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3.5 17.3a2 2 0 0 0 2.8 2.8l5.8-5.8a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>',
+  arrive: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/>',
+  depart: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  left: '<path d="M15 6l-6 6 6 6"/>',
+  right: '<path d="M9 6l6 6-6 6"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   trash: '<path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/>',
   check: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/>',
@@ -68,6 +81,10 @@ const icon = (name) =>
 // ---------------------------------------------------------------------------
 
 async function api(method, url, body) {
+  // The browser knows the hotel's local date; the server may be running in another time zone.
+  if (method === 'GET' && url.startsWith('/api/') && !url.startsWith('/api/auth/')) {
+    url += `${url.includes('?') ? '&' : '?'}today=${today()}`;
+  }
   const res = await fetch(url, {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : {},
@@ -82,7 +99,7 @@ async function api(method, url, body) {
   return data;
 }
 
-const state = { properties: [], units: [], tenants: [], leases: [], payments: [], maintenance: [] };
+const state = { rooms: [], guests: [], bookings: [], payments: [] };
 
 async function loadAll() {
   const keys = Object.keys(state);
@@ -91,55 +108,257 @@ async function loadAll() {
 }
 
 // ---------------------------------------------------------------------------
-// Entity definitions: each drives its list table and its add/edit form.
-//   fields: { key, label, type, required, wide, step, choices | ref | options(ctx), initial, dependsOn }
-//   columns: { label, cls, render(row) -> HTML }
+// The booking form: rooms offered depend on the dates and party size, and the guest can be created on the spot.
 // ---------------------------------------------------------------------------
 
+let availabilitySeq = 0;
+
+function stayHint(form, text, tone = '') {
+  const hint = $('[data-info="availability"] .hint', form);
+  hint.textContent = text;
+  hint.className = `hint ${tone}`.trim();
+}
+
+function updateSummary(form) {
+  const el = $('[data-info="summary"] .hint', form);
+  const get = (k) => form.elements.namedItem(k).value;
+  const nights = get('checkIn') && get('checkOut') ? daysBetween(get('checkIn'), get('checkOut')) : 0;
+  const rate = Number(get('nightlyRate'));
+  if (nights < 1 || !get('nightlyRate') || Number.isNaN(rate)) {
+    el.textContent = '';
+    el.className = 'hint';
+    return;
+  }
+  el.innerHTML = `<strong>${esc(plural(nights, 'night'))}</strong> × ${esc(money.format(rate))} = <strong>${esc(money.format(nights * rate))}</strong>`;
+  el.className = 'hint total';
+}
+
+// When a room is chosen its rate is filled in, unless the receptionist typed a different one.
+function applyRoomRate(form) {
+  const roomId = form.elements.namedItem('roomId').value;
+  const room = form._rooms?.find((r) => r.id === roomId) ?? state.rooms.find((r) => r.id === roomId);
+  const input = form.elements.namedItem('nightlyRate');
+  if (room && (input.value === '' || input.value === form.dataset.autoRate)) {
+    input.value = room.rate;
+    form.dataset.autoRate = String(room.rate);
+  }
+}
+
+async function refreshAvailability(form) {
+  const get = (k) => form.elements.namedItem(k).value;
+  const select = form.elements.namedItem('roomId');
+  const checkIn = get('checkIn');
+  const checkOut = get('checkOut');
+  if (!checkIn || !checkOut || checkOut <= checkIn) {
+    select.innerHTML = '<option value="">Select a room…</option>';
+    stayHint(form, 'Choose a check-out date after check-in.', 'warn');
+    return;
+  }
+  const guests = Math.max(1, (Number(get('adults')) || 0) + (Number(get('children')) || 0));
+  const query = new URLSearchParams({ checkIn, checkOut, guests: String(guests) });
+  if (form._rec?.id) query.set('exclude', form._rec.id);
+
+  const seq = ++availabilitySeq;
+  stayHint(form, 'Checking availability…');
+  try {
+    const { rooms, nights } = await api('GET', `/api/availability?${query}`);
+    if (seq !== availabilitySeq || !form.isConnected) return; // a newer search replaced this one
+    form._rooms = rooms;
+    const want = select.value || form.dataset.wantRoom;
+    select.innerHTML =
+      '<option value="">Select a room…</option>' +
+      rooms
+        .map((r) => `<option value="${esc(r.id)}">${esc(`Room ${r.number} · ${r.type} · sleeps ${r.capacity} · ${money.format(r.rate)}/night`)}</option>`)
+        .join('');
+    select.value = rooms.some((r) => r.id === want) ? want : '';
+    stayHint(
+      form,
+      rooms.length ? `${plural(rooms.length, 'room')} available for ${plural(nights, 'night')}.` : 'No rooms are free for these dates and party size.',
+      rooms.length ? 'ok' : 'warn',
+    );
+    applyRoomRate(form);
+    updateSummary(form);
+  } catch (err) {
+    if (seq === availabilitySeq) stayHint(form, err.message, 'warn');
+  }
+}
+
+function syncNewGuest(form) {
+  const adding = form.elements.namedItem('guestId').value === '__new__';
+  for (const el of form.querySelectorAll('[data-group="newguest"]')) el.hidden = !adding;
+  form.elements.namedItem('newGuestName').required = adding;
+}
+
+// ---------------------------------------------------------------------------
+// Entity definitions: each drives its list and its add/edit form.
+//   fields: { key, label, type, required, wide, step, min, choices | ref | options(ctx), noBlank, initial, hidden, group }
+//   columns: { label, cls, render(row) -> HTML }
+//   actions: { id, label | icon+title, when(row), status | open(row), confirm, danger }
+// ---------------------------------------------------------------------------
+
+const BOOKING_ORDER = { 'Checked in': 0, Confirmed: 1, 'Checked out': 2, Cancelled: 3 };
+
 const ENTITIES = {
-  properties: {
-    singular: 'Property',
-    plural: 'Properties',
+  bookings: {
+    singular: 'Booking',
+    plural: 'Bookings',
+    addLabel: 'New booking',
+    saveLabel: 'Save booking',
+    needs: ['rooms'],
     fields: [
-      { key: 'name', label: 'Name', required: true },
-      { key: 'type', label: 'Type', choices: ['Apartment', 'House', 'Condo', 'Commercial', 'Other'] },
-      { key: 'address', label: 'Address', required: true, wide: true },
+      { key: 'checkIn', label: 'Check-in', type: 'date', required: true, initial: today },
+      { key: 'checkOut', label: 'Check-out', type: 'date', required: true, initial: () => addDays(today(), 1) },
+      { key: 'adults', label: 'Adults', type: 'number', step: '1', min: 1, required: true, initial: () => 2 },
+      { key: 'children', label: 'Children', type: 'number', step: '1', min: 0, initial: () => 0 },
+      { key: 'availability', type: 'info' },
+      {
+        key: 'roomId',
+        label: 'Room',
+        required: true,
+        wide: true,
+        // Only the current choice is known up front; the full list arrives from the availability search.
+        options: ({ rec, preset }) => {
+          const id = rec.roomId ?? preset?.roomId;
+          const room = state.rooms.find((r) => r.id === id);
+          return room ? [{ value: room.id, label: `Room ${room.number}` }] : [];
+        },
+      },
+      {
+        key: 'guestId',
+        label: 'Guest',
+        required: true,
+        wide: true,
+        initial: () => (state.guests.length ? '' : '__new__'),
+        options: ({ rec }) => [
+          ...(rec.id ? [] : [{ value: '__new__', label: '＋ New guest…' }]),
+          ...[...state.guests].sort(byLabel).map((g) => ({ value: g.id, label: g.name })),
+        ],
+      },
+      { key: 'newGuestName', label: 'Guest name', wide: true, group: 'newguest', hidden: true },
+      { key: 'newGuestEmail', label: 'Email', type: 'email', group: 'newguest', hidden: true },
+      { key: 'newGuestPhone', label: 'Phone', type: 'tel', group: 'newguest', hidden: true },
+      { key: 'nightlyRate', label: 'Rate per night', type: 'number', step: '0.01' },
+      {
+        key: 'status',
+        label: 'Status',
+        noBlank: true,
+        initial: () => 'Confirmed',
+        options: ({ rec }) =>
+          (rec.id ? ['Confirmed', 'Checked in', 'Checked out', 'Cancelled'] : ['Confirmed', 'Checked in']).map((s) => ({ value: s, label: s })),
+      },
+      { key: 'summary', type: 'info' },
       { key: 'notes', label: 'Notes', type: 'textarea', wide: true },
     ],
     columns: [
-      { label: 'Name', render: (r) => `<strong>${esc(r.name)}</strong>` },
-      { label: 'Address', render: (r) => esc(r.address) },
-      { label: 'Type', render: (r) => esc(r.type) },
-      { label: 'Units', cls: 'num', render: (r) => state.units.filter((u) => u.propertyId === r.id).length },
+      {
+        label: 'Guest',
+        render: (r) =>
+          `<strong>${esc(r.guestName)}</strong><div class="sub">${esc(`${plural(r.adults, 'adult')}${r.children ? ` · ${r.children} ${r.children === 1 ? 'child' : 'children'}` : ''}`)}</div>`,
+      },
+      { label: 'Room', render: (r) => `${esc(r.roomNumber)}<div class="sub">${esc(r.roomType)}</div>` },
+      { label: 'Stay', render: (r) => `${esc(fmtShort(r.checkIn))} → ${esc(fmtShort(r.checkOut))}<div class="sub">${esc(plural(r.nights, 'night'))}</div>` },
+      { label: 'Total', cls: 'num', render: (r) => money.format(r.total) },
+      {
+        label: 'Balance',
+        cls: 'num',
+        render: (r) => (r.status === 'Cancelled' ? '<span class="sub">—</span>' : r.balance > 0 ? `<span class="due">${money.format(r.balance)}</span>` : badge('Paid')),
+      },
+      { label: 'Status', render: (r) => badge(r.status) },
     ],
-    sort: byLabel,
+    sort: (a, b) =>
+      BOOKING_ORDER[a.status] - BOOKING_ORDER[b.status] ||
+      (BOOKING_ORDER[a.status] < 2 ? a.checkIn.localeCompare(b.checkIn) : b.checkIn.localeCompare(a.checkIn)),
+    filters: [
+      { id: 'all', label: 'All', test: () => true },
+      { id: 'upcoming', label: 'Upcoming', test: (r) => r.status === 'Confirmed' },
+      { id: 'inhouse', label: 'In house', test: (r) => r.status === 'Checked in' },
+      { id: 'past', label: 'Past', test: (r) => r.status === 'Checked out' },
+      { id: 'cancelled', label: 'Cancelled', test: (r) => r.status === 'Cancelled' },
+    ],
+    actions: [
+      { id: 'checkin', label: 'Check in', status: 'Checked in', when: (r) => r.status === 'Confirmed' },
+      { id: 'checkout', label: 'Check out', status: 'Checked out', when: (r) => r.status === 'Checked in' },
+      { id: 'reinstate', label: 'Reinstate', status: 'Confirmed', when: (r) => r.status === 'Cancelled' },
+      {
+        id: 'pay',
+        icon: 'payments',
+        title: 'Record a payment',
+        when: (r) => r.status !== 'Cancelled' && r.balance > 0,
+        open: (r) => openForm('payments', null, { bookingId: r.id, amount: r.balance }),
+      },
+      {
+        id: 'cancel',
+        icon: 'close',
+        title: 'Cancel booking',
+        danger: true,
+        status: 'Cancelled',
+        confirm: 'Cancel this booking? The room becomes available again.',
+        when: (r) => r.status === 'Confirmed',
+      },
+    ],
+    afterOpen(form, rec, isNew, preset) {
+      form._rec = rec;
+      form.dataset.wantRoom = rec?.roomId ?? preset.roomId ?? '';
+      form.dataset.autoRate = rec ? String(state.rooms.find((r) => r.id === rec.roomId)?.rate ?? '') : '';
+      form.addEventListener('input', (e) => {
+        if (e.target.name === 'nightlyRate') updateSummary(form);
+      });
+      syncNewGuest(form);
+      updateSummary(form);
+      refreshAvailability(form);
+    },
+    onChange(key, form) {
+      const get = (k) => form.elements.namedItem(k).value;
+      if (key === 'checkIn' && get('checkIn') && get('checkOut') <= get('checkIn')) {
+        form.elements.namedItem('checkOut').value = addDays(get('checkIn'), 1);
+      }
+      if (['checkIn', 'checkOut', 'adults', 'children'].includes(key)) refreshAvailability(form);
+      if (key === 'roomId') {
+        form.dataset.wantRoom = get('roomId');
+        applyRoomRate(form);
+        updateSummary(form);
+      }
+      if (key === 'guestId') syncNewGuest(form);
+      if (key === 'nightlyRate') updateSummary(form);
+    },
+    toBody(body) {
+      const { newGuestName, newGuestEmail, newGuestPhone, ...rest } = body;
+      if (rest.guestId === '__new__') {
+        delete rest.guestId;
+        rest.newGuest = { name: newGuestName, email: newGuestEmail, phone: newGuestPhone };
+      }
+      return rest;
+    },
   },
 
-  units: {
-    singular: 'Unit',
-    plural: 'Units',
-    needs: ['properties'],
+  rooms: {
+    singular: 'Room',
+    plural: 'Rooms',
+    addLabel: 'Add room',
+    view: 'cards',
     fields: [
-      { key: 'propertyId', label: 'Property', ref: 'properties', required: true, wide: true },
-      { key: 'number', label: 'Unit number', required: true },
-      { key: 'rent', label: 'Monthly rent', type: 'number', step: '0.01', required: true },
-      { key: 'bedrooms', label: 'Bedrooms', type: 'number', step: '1', initial: () => 1 },
-      { key: 'bathrooms', label: 'Bathrooms', type: 'number', step: '0.5', initial: () => 1 },
+      { key: 'number', label: 'Room number', required: true },
+      { key: 'type', label: 'Type', choices: ['Standard', 'Twin', 'Deluxe', 'Family', 'Suite'] },
+      { key: 'capacity', label: 'Sleeps (guests)', type: 'number', step: '1', min: 1, required: true, initial: () => 2 },
+      { key: 'rate', label: 'Rate per night', type: 'number', step: '0.01', required: true },
+      { key: 'status', label: 'Availability', choices: ['Active', 'Out of service'] },
+      { key: 'description', label: 'Description', type: 'textarea', wide: true },
     ],
-    columns: [
-      { label: 'Property', render: (r) => esc(r.propertyName) },
-      { label: 'Unit', render: (r) => `<strong>${esc(r.number)}</strong>` },
-      { label: 'Beds / baths', render: (r) => `${esc(r.bedrooms)} bd / ${esc(r.bathrooms)} ba` },
-      { label: 'Rent', cls: 'num', render: (r) => money.format(r.rent) },
-      { label: 'Status', render: (r) => badge(r.occupancy) },
-      { label: 'Tenant', render: (r) => esc(r.tenantName) },
+    sort: byNumber,
+    actions: [
+      {
+        id: 'book',
+        label: 'Book',
+        when: (r) => r.status === 'Active',
+        open: (r) => openForm('bookings', null, { roomId: r.id, checkIn: today(), checkOut: addDays(today(), 1) }),
+      },
     ],
-    sort: byLabel,
   },
 
-  tenants: {
-    singular: 'Tenant',
-    plural: 'Tenants',
+  guests: {
+    singular: 'Guest',
+    plural: 'Guests',
+    addLabel: 'Add guest',
     fields: [
       { key: 'name', label: 'Full name', required: true, wide: true },
       { key: 'email', label: 'Email', type: 'email' },
@@ -150,133 +369,62 @@ const ENTITIES = {
       { label: 'Name', render: (r) => `<strong>${esc(r.name)}</strong>` },
       { label: 'Email', render: (r) => esc(r.email) },
       { label: 'Phone', render: (r) => esc(r.phone) },
-      { label: 'Current unit', render: (r) => esc(r.currentUnits) || '<span class="sub">—</span>' },
+      { label: 'Stays', cls: 'num', render: (r) => r.stays },
+      { label: 'Next arrival', render: (r) => (r.nextArrival ? esc(fmtDate(r.nextArrival)) : '<span class="sub">—</span>') },
+      { label: 'Last visit', render: (r) => (r.lastVisit ? esc(fmtDate(r.lastVisit)) : '<span class="sub">—</span>') },
     ],
     sort: byLabel,
-  },
-
-  leases: {
-    singular: 'Lease',
-    plural: 'Leases',
-    needs: ['units', 'tenants'],
-    fields: [
-      { key: 'unitId', label: 'Unit', ref: 'units', required: true, wide: true },
-      { key: 'tenantId', label: 'Tenant', ref: 'tenants', required: true, wide: true },
-      { key: 'startDate', label: 'Start date', type: 'date', required: true, initial: today },
-      { key: 'endDate', label: 'End date', type: 'date', required: true },
-      { key: 'rent', label: 'Monthly rent', type: 'number', step: '0.01', required: true },
-      { key: 'deposit', label: 'Security deposit', type: 'number', step: '0.01', initial: () => 0 },
-      { key: 'status', label: 'Status', choices: ['Active', 'Ended'] },
-    ],
-    columns: [
-      { label: 'Tenant', render: (r) => `<strong>${esc(r.tenantName)}</strong>` },
-      { label: 'Unit', cls: 'wrap', render: (r) => esc(r.unitLabel) },
-      { label: 'Term', render: (r) => `${fmtDate(r.startDate)} → ${fmtDate(r.endDate)}` },
-      { label: 'Rent', cls: 'num', render: (r) => money.format(r.rent) },
-      { label: 'Deposit', cls: 'num', render: (r) => money.format(r.deposit) },
-      { label: 'Status', render: (r) => badge(r.expired ? 'Expired' : r.status) },
-    ],
-    sort: (a, b) => b.startDate.localeCompare(a.startDate),
     actions: [
       {
-        id: 'end',
-        label: 'End lease',
-        when: (r) => r.status === 'Active',
-        confirm: 'End this lease? The unit will show as vacant.',
-        run: (r) => ({ ...r, status: 'Ended' }),
-        done: 'Lease ended',
+        id: 'book',
+        icon: 'bookings',
+        title: 'New booking for this guest',
+        when: () => true,
+        open: (r) => openForm('bookings', null, { guestId: r.id }),
       },
     ],
-    onChange(key, form, isNew) {
-      if (key !== 'unitId' || !isNew) return;
-      const unit = state.units.find((u) => u.id === form.elements.namedItem('unitId').value);
-      if (unit) form.elements.namedItem('rent').value = unit.rent;
-    },
   },
 
   payments: {
     singular: 'Payment',
     plural: 'Payments',
-    needs: ['leases'],
+    addLabel: 'Record payment',
+    needs: ['bookings'],
     fields: [
       {
-        key: 'leaseId',
-        label: 'Lease',
+        key: 'bookingId',
+        label: 'Booking',
         required: true,
         wide: true,
         options: ({ rec }) =>
-          state.leases
-            .filter((l) => l.status === 'Active' || l.id === rec.leaseId)
-            .sort(byLabel)
-            .map((l) => ({ value: l.id, label: l.label })),
+          state.bookings
+            .filter((b) => b.status !== 'Cancelled' || b.id === rec.bookingId)
+            .sort((a, b) => b.checkIn.localeCompare(a.checkIn))
+            .map((b) => ({
+              value: b.id,
+              label: `${b.guestName} · Room ${b.roomNumber} · ${fmtShort(b.checkIn)}–${fmtShort(b.checkOut)} · ${money.format(b.balance)} due`,
+            })),
       },
       { key: 'date', label: 'Date received', type: 'date', required: true, initial: today },
-      { key: 'period', label: 'Rent for month', type: 'month', required: true, initial: () => today().slice(0, 7) },
       { key: 'amount', label: 'Amount', type: 'number', step: '0.01', required: true },
-      { key: 'method', label: 'Method', choices: ['Bank transfer', 'Cash', 'Check', 'Card', 'Online', 'Other'] },
+      { key: 'method', label: 'Method', choices: ['Card', 'Cash', 'Bank transfer', 'Online', 'Other'] },
       { key: 'note', label: 'Note', wide: true },
     ],
     columns: [
-      { label: 'Date', render: (r) => fmtDate(r.date) },
-      { label: 'Rent for', render: (r) => fmtMonth(r.period) },
-      { label: 'Tenant', render: (r) => `<strong>${esc(r.tenantName)}</strong>` },
-      { label: 'Unit', cls: 'wrap', render: (r) => esc(r.unitLabel) },
+      { label: 'Date', render: (r) => esc(fmtDate(r.date)) },
+      { label: 'Guest', render: (r) => `<strong>${esc(r.guestName)}</strong>` },
+      { label: 'Room', render: (r) => esc(r.roomNumber) },
+      { label: 'Stay', render: (r) => esc(r.stay.replace(/\d{4}-\d{2}-\d{2}/g, (d) => fmtShort(d))) },
       { label: 'Amount', cls: 'num', render: (r) => money.format(r.amount) },
       { label: 'Method', render: (r) => esc(r.method) },
       { label: 'Note', render: (r) => esc(r.note) },
     ],
     sort: (a, b) => b.date.localeCompare(a.date),
     onChange(key, form, isNew) {
-      if (key !== 'leaseId' || !isNew) return;
-      const lease = state.leases.find((l) => l.id === form.elements.namedItem('leaseId').value);
-      if (lease) form.elements.namedItem('amount').value = lease.rent;
+      if (key !== 'bookingId' || !isNew) return;
+      const booking = state.bookings.find((b) => b.id === form.elements.namedItem('bookingId').value);
+      if (booking && booking.balance > 0) form.elements.namedItem('amount').value = booking.balance;
     },
-  },
-
-  maintenance: {
-    singular: 'Request',
-    plural: 'Maintenance',
-    needs: ['properties'],
-    fields: [
-      { key: 'title', label: 'Title', required: true, wide: true },
-      { key: 'propertyId', label: 'Property', ref: 'properties', required: true },
-      {
-        key: 'unitId',
-        label: 'Unit',
-        dependsOn: 'propertyId',
-        options: ({ val }) =>
-          state.units
-            .filter((u) => !val('propertyId') || u.propertyId === val('propertyId'))
-            .sort(byLabel)
-            .map((u) => ({ value: u.id, label: val('propertyId') ? u.number : u.label })),
-      },
-      { key: 'priority', label: 'Priority', choices: ['Low', 'Medium', 'High', 'Urgent'], initial: () => 'Medium' },
-      { key: 'status', label: 'Status', choices: ['Open', 'In Progress', 'Resolved'] },
-      { key: 'reportedDate', label: 'Reported', type: 'date', initial: today },
-      { key: 'cost', label: 'Cost', type: 'number', step: '0.01', initial: () => 0 },
-      { key: 'description', label: 'Description', type: 'textarea', wide: true },
-    ],
-    columns: [
-      { label: 'Request', render: (r) => `<strong>${esc(r.title)}</strong>` },
-      { label: 'Location', render: (r) => esc(r.unitNumber ? `${r.propertyName} · ${r.unitNumber}` : r.propertyName) },
-      { label: 'Priority', render: (r) => badge(r.priority) },
-      { label: 'Status', render: (r) => badge(r.status) },
-      { label: 'Reported', render: (r) => fmtDate(r.reportedDate) },
-      { label: 'Cost', cls: 'num', render: (r) => money.format(r.cost) },
-    ],
-    sort: (a, b) =>
-      Number(a.status === 'Resolved') - Number(b.status === 'Resolved') ||
-      PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
-      b.reportedDate.localeCompare(a.reportedDate),
-    actions: [
-      {
-        id: 'resolve',
-        label: 'Resolve',
-        when: (r) => r.status !== 'Resolved',
-        run: (r) => ({ ...r, status: 'Resolved' }),
-        done: 'Marked as resolved',
-      },
-    ],
   },
 };
 
@@ -301,7 +449,14 @@ let currentUser = null;
 for (const el of document.querySelectorAll('[data-icon]')) el.innerHTML = icon(el.dataset.icon);
 $('#logout').innerHTML = icon('logout');
 
-const NAV = [['dashboard', 'Dashboard'], ...Object.entries(ENTITIES).map(([k, e]) => [k, e.plural])];
+const NAV = [
+  ['dashboard', 'Dashboard'],
+  ['calendar', 'Calendar'],
+  ['bookings', 'Bookings'],
+  ['rooms', 'Rooms'],
+  ['guests', 'Guests'],
+  ['payments', 'Payments'],
+];
 $('#nav').innerHTML = NAV.map(([k, label]) => `<a href="#/${k}" data-nav="${k}">${icon(k)}<span>${esc(label)}</span></a>`).join('');
 
 function syncThemeIcons() {
@@ -350,15 +505,15 @@ function showAuth(mode, notice = '') {
   bootEl.hidden = true;
   shell.hidden = true;
   authEl.hidden = false;
-  document.title = `${setup ? 'Create account' : 'Sign in'} · PMS`;
+  document.title = `${setup ? 'Create account' : 'Sign in'} · Hotel PMS`;
 
   authEl.innerHTML = `
     <button type="button" class="icon-btn theme-toggle theme-corner" aria-label="Switch colour theme"></button>
     <div class="glass auth-card spot">
       <div class="auth-logo">
-        <span class="logo">${icon('properties')}</span>
+        <span class="logo">${icon('rooms')}</span>
         <h1>${setup ? 'Create your account' : 'Welcome back'}</h1>
-        <p>${setup ? 'Set up the first account to start managing your properties.' : 'Sign in to manage your properties.'}</p>
+        <p>${setup ? 'Set up the first account to start taking bookings.' : 'Sign in to manage your hotel.'}</p>
       </div>
       ${notice ? `<p class="notice" role="status">${esc(notice)}</p>` : ''}
       <form class="auth-form" novalidate>
@@ -435,6 +590,7 @@ function showAuth(mode, notice = '') {
 async function enterApp(user) {
   currentUser = user;
   for (const key of Object.keys(state)) state[key] = [];
+  calendarStart = null;
   bootEl.hidden = true;
   authEl.hidden = true;
   authEl.innerHTML = '';
@@ -468,6 +624,8 @@ $('#logout').addEventListener('click', async () => {
 
 let shownName = null;
 let routeSeq = 0;
+let calendarStart = null;
+const filterState = {};
 
 const greeting = () => {
   const h = new Date().getHours();
@@ -481,7 +639,8 @@ const skeleton = () => `
 async function route() {
   if (!currentUser) return;
   const name = location.hash.replace(/^#\//, '') || 'dashboard';
-  if (name !== 'dashboard' && !ENTITIES[name]) {
+  const ent = ENTITIES[name];
+  if (name !== 'dashboard' && name !== 'calendar' && !ent) {
     location.hash = '#/dashboard';
     return;
   }
@@ -498,21 +657,28 @@ async function route() {
     else a.removeAttribute('aria-current');
   }
 
-  const isList = name !== 'dashboard';
-  titleEl.textContent = isList ? ENTITIES[name].plural : `${greeting()}, ${currentUser.username}`;
-  subtitleEl.textContent = isList
-    ? ''
-    : new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-  searchWrap.hidden = addBtn.hidden = !isList;
-  if (isList) addBtn.innerHTML = `${icon('plus')}<span>Add ${esc(ENTITIES[name].singular.toLowerCase())}</span>`;
-  document.title = `${isList ? ENTITIES[name].plural : 'Dashboard'} · PMS`;
+  const pageTitle = ent ? ent.plural : name === 'calendar' ? 'Calendar' : 'Dashboard';
+  titleEl.textContent = name === 'dashboard' ? `${greeting()}, ${currentUser.username}` : pageTitle;
+  subtitleEl.textContent =
+    name === 'dashboard'
+      ? new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+      : name === 'calendar'
+        ? 'Click an empty night to start a booking.'
+        : '';
+  searchWrap.hidden = !ent;
+  addBtn.hidden = false;
+  addBtn.innerHTML = `${icon('plus')}<span>${esc(ent ? ent.addLabel : 'New booking')}</span>`;
+  document.title = `${pageTitle} · Hotel PMS`;
 
   try {
-    if (isList) {
+    if (ent) {
       await loadAll();
       if (seq === routeSeq) renderList(name, fresh);
+    } else if (name === 'calendar') {
+      await loadAll();
+      if (seq === routeSeq) renderCalendar(fresh);
     } else {
-      const data = await api('GET', '/api/dashboard');
+      const [data] = await Promise.all([api('GET', '/api/dashboard'), loadAll()]);
       if (seq === routeSeq) renderDashboard(data, fresh);
     }
   } catch (err) {
@@ -537,14 +703,15 @@ function afterRender(fresh) {
 
   if (fresh) {
     view.querySelectorAll('.rise').forEach((el, i) => (el.style.animationDelay = `${Math.min(i, 9) * 60}ms`));
-    [...view.querySelectorAll('tbody tr')].slice(0, 16).forEach((tr, i) => (tr.style.animationDelay = `${120 + i * 28}ms`));
+    [...view.querySelectorAll('tbody tr, .room-card')].slice(0, 16).forEach((el, i) => (el.style.animationDelay = `${120 + i * 28}ms`));
   }
 
-  // Bars and the ring grow from empty to their value.
+  // Bars, columns and the ring grow from empty to their value.
   const grow = () => {
     for (const el of view.querySelectorAll('[data-pct]')) {
       const pct = Number(el.dataset.pct);
       if (el.classList.contains('ring-bar')) el.style.strokeDashoffset = RING_C * (1 - pct / 100);
+      else if (el.classList.contains('fc-fill')) el.style.height = `${pct}%`;
       else el.style.width = `${pct}%`;
     }
   };
@@ -572,17 +739,16 @@ function afterRender(fresh) {
 
 function renderDashboard(d, fresh) {
   view.dataset.entity = '';
-  if (!d.totalProperties) {
+  if (!d.totalRooms) {
     view.innerHTML = `
       <div class="glass welcome rise">
-        <h2>Welcome to PMS</h2>
+        <h2>Welcome to Hotel PMS</h2>
         <p class="sub">Get set up in a few steps:</p>
         <ol>
-          <li><a href="#/properties">Add a property</a></li>
-          <li><a href="#/units">Add its units</a> with their monthly rent</li>
-          <li><a href="#/tenants">Add your tenants</a></li>
-          <li><a href="#/leases">Create a lease</a> linking a tenant to a unit</li>
-          <li><a href="#/payments">Record rent payments</a> as they arrive</li>
+          <li><a href="#/rooms">Add your rooms</a> with their type, capacity and nightly rate</li>
+          <li>Use <strong>New booking</strong> to pick dates, choose an available room and add the guest</li>
+          <li>Check guests in and out from the dashboard or the <a href="#/bookings">bookings list</a></li>
+          <li>Record payments as guests settle up</li>
         </ol>
       </div>`;
     afterRender(fresh);
@@ -611,72 +777,67 @@ function renderDashboard(d, fresh) {
         <span class="ring-text" ${counter(d.occupancyRate, 'pct')}>${d.occupancyRate}%</span>
       </div>
       <div class="stat-body">
-        <div class="stat-label">Occupancy</div>
-        <div class="stat-value" ${counter(d.occupiedUnits, 'int')}>${d.occupiedUnits}</div>
-        <div class="stat-sub">of ${d.totalUnits} units occupied</div>
+        <div class="stat-label">Occupancy tonight</div>
+        <div class="stat-value" ${counter(d.occupiedTonight, 'int')}>${d.occupiedTonight}</div>
+        <div class="stat-sub">of ${plural(d.activeRooms, 'room')}${d.outOfService ? ` · ${d.outOfService} out of service` : ''}</div>
       </div>
     </div>`;
 
-  const panel = (title, iconName, table, emptyText, wide = false) => `
-    <section class="glass card rise${wide ? ' wide' : ''}">
-      <div class="panel-head">${icon(iconName)}<h2>${esc(title)}</h2></div>
-      ${table ? `<div class="table-wrap">${table}</div>` : `<div class="empty">${icon('inbox')}<p>${esc(emptyText)}</p></div>`}
+  const toCheckIn = d.arrivals.filter((b) => b.status === 'Confirmed').length;
+  const toCheckOut = d.departures.filter((b) => b.status === 'Checked in').length;
+  const average = Math.round(d.forecast.reduce((sum, f) => sum + f.rate, 0) / d.forecast.length);
+
+  const forecast = `
+    <section class="glass hero spot rise">
+      <div class="hero-head">
+        <div><h2>Next 7 nights</h2><p class="sub">Share of rooms booked each night</p></div>
+        <div class="hero-pct" ${counter(average, 'pct')}>${average}%</div>
+      </div>
+      <div class="forecast">
+        ${d.forecast
+          .map(
+            (f, i) => `
+          <div class="fc-col">
+            <span class="fc-val">${f.rate}%</span>
+            <div class="fc-track"><span class="fc-fill${i === 0 ? ' tonight' : ''}" data-pct="${f.rate}"></span></div>
+            <span class="fc-day">${i === 0 ? 'Tonight' : esc(fmtWeekday(f.date))}</span>
+            <span class="fc-date">${esc(fmtShort(f.date))}</span>
+          </div>`,
+          )
+          .join('')}
+      </div>
     </section>`;
 
   const table = (heads, rows) =>
     `<table><thead><tr>${heads.map(([h, cls]) => `<th class="${cls ?? ''}">${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+  const panel = (title, iconName, tableHtml, emptyText) => `
+    <section class="glass card rise">
+      <div class="panel-head">${icon(iconName)}<h2>${esc(title)}</h2></div>
+      ${tableHtml ? `<div class="table-wrap">${tableHtml}</div>` : `<div class="empty">${icon('inbox')}<p>${esc(emptyText)}</p></div>`}
+    </section>`;
+  const guestCell = (b) => `<td><strong>${esc(b.guestName)}</strong><div class="sub">${esc(`${plural(b.adults + b.children, 'guest')} · ${plural(b.nights, 'night')}`)}</div></td>`;
+  const balanceCell = (b) => `<td class="num">${b.balance > 0 ? `<span class="due">${money.format(b.balance)}</span>` : badge('Paid')}</td>`;
+  const quick = (b, status, label) =>
+    `<button type="button" class="btn small accent" data-bstatus="${status}" data-id="${esc(b.id)}">${label}</button>`;
 
-  const expected = d.rentRoll.reduce((sum, r) => sum + r.rent, 0);
-  const received = d.rentRoll.reduce((sum, r) => sum + Math.min(r.paid, r.rent), 0);
-  const collectedPct = expected ? Math.round((received / expected) * 100) : 0;
-  const hero = d.rentRoll.length
-    ? `<section class="glass hero spot rise">
-        <div class="hero-head">
-          <div><h2>Rent collection · ${esc(fmtMonth(d.period))}</h2><p class="sub">${esc(money.format(received))} of ${esc(money.format(expected))} received from current leases</p></div>
-          <div class="hero-pct" ${counter(collectedPct, 'pct')}>${collectedPct}%</div>
-        </div>
-        <div class="bar"><span class="bar-fill" data-pct="${collectedPct}"></span></div>
-      </section>`
-    : '';
-
-  const rentRoll = d.rentRoll.length
+  const arrivals = d.arrivals.length
     ? table(
-        [['Tenant'], ['Unit'], ['Rent', 'num'], ['Paid', 'num'], ['Balance', 'num'], ['Status']],
-        d.rentRoll
-          .map((r) => {
-            const pct = r.rent ? Math.min(100, Math.round((r.paid / r.rent) * 100)) : 100;
-            return `<tr><td><strong>${esc(r.tenantName)}</strong></td><td>${esc(r.unitLabel)}</td>
-              <td class="num">${money.format(r.rent)}</td>
-              <td class="num">${money.format(r.paid)}<div class="meter"><span data-pct="${pct}"></span></div></td>
-              <td class="num">${money.format(r.balance)}</td><td>${badge(r.status)}</td></tr>`;
-          })
-          .join(''),
-      )
-    : '';
-
-  const expiring = d.expiringLeases.length
-    ? table(
-        [['Tenant'], ['Unit'], ['Ends'], ['']],
-        d.expiringLeases
-          .map((l) => {
-            const when =
-              l.daysLeft < 0
-                ? `<span class="badge red">Expired ${-l.daysLeft}d ago</span>`
-                : `<span class="badge ${l.daysLeft <= 30 ? 'amber' : 'blue'}">${l.daysLeft === 0 ? 'Ends today' : `${l.daysLeft}d left`}</span>`;
-            return `<tr><td><strong>${esc(l.tenantName)}</strong></td><td>${esc(l.unitLabel)}</td><td>${fmtDate(l.endDate)}</td><td>${when}</td></tr>`;
-          })
-          .join(''),
-      )
-    : '';
-
-  const requests = d.openRequests.length
-    ? table(
-        [['Request'], ['Location'], ['Priority'], ['Status']],
-        d.openRequests
+        [['Guest'], ['Room'], ['Balance', 'num'], ['']],
+        d.arrivals
           .map(
-            (m) => `<tr><td><strong>${esc(m.title)}</strong></td>
-              <td>${esc(m.unitNumber ? `${m.propertyName} · ${m.unitNumber}` : m.propertyName)}</td>
-              <td>${badge(m.priority)}</td><td>${badge(m.status)}</td></tr>`,
+            (b) => `<tr>${guestCell(b)}<td>${esc(b.roomNumber)}<div class="sub">${esc(b.roomType)}</div></td>${balanceCell(b)}
+              <td class="num">${b.status === 'Confirmed' ? quick(b, 'Checked in', 'Check in') : badge(b.status)}</td></tr>`,
+          )
+          .join(''),
+      )
+    : '';
+  const departures = d.departures.length
+    ? table(
+        [['Guest'], ['Room'], ['Balance', 'num'], ['']],
+        d.departures
+          .map(
+            (b) => `<tr>${guestCell(b)}<td>${esc(b.roomNumber)}<div class="sub">${esc(b.roomType)}</div></td>${balanceCell(b)}
+              <td class="num">${b.status === 'Checked in' ? quick(b, 'Checked out', 'Check out') : badge(b.status)}</td></tr>`,
           )
           .join(''),
       )
@@ -685,59 +846,183 @@ function renderDashboard(d, fresh) {
   view.innerHTML = `
     <div class="stats">
       ${occupancy}
-      ${stat('Monthly rent roll', d.monthlyRent, 'money', 'From current leases', 'payments', 'violet')}
-      ${stat(`Collected · ${fmtMonth(d.period)}`, d.collected, 'money', 'Payments for this month', 'check', 'fresh')}
-      ${stat('Outstanding', d.outstanding, 'money', 'Still due this month', 'clock', 'rose')}
-      ${stat('Open requests', d.openMaintenance, 'int', `${d.urgentMaintenance} urgent`, 'maintenance', 'warm')}
-      ${stat('Properties', d.totalProperties, 'int', `${d.totalUnits} units in total`, 'properties', 'cool')}
+      ${stat('Arrivals today', d.arrivals.length, 'int', toCheckIn ? `${toCheckIn} still to check in` : 'All checked in', 'arrive', 'cool')}
+      ${stat('Departures today', d.departures.length, 'int', toCheckOut ? `${toCheckOut} still to check out` : 'All checked out', 'depart', 'warm')}
+      ${stat('Guests in house', d.inHouseGuests, 'int', `${d.upcomingBookings} upcoming bookings`, 'guests', 'violet')}
+      ${stat('Revenue this month', d.revenueThisMonth, 'money', 'Payments received', 'payments', 'fresh')}
+      ${stat('Outstanding', d.outstanding, 'money', 'Owed on current and past stays', 'clock', 'rose')}
     </div>
-    ${hero}
+    ${forecast}
     <div class="panels">
-      ${panel(`Rent · ${fmtMonth(d.period)}`, 'payments', rentRoll, 'No current leases.', true)}
-      ${panel('Leases ending soon', 'leases', expiring, 'No leases ending in the next 60 days.')}
-      ${panel('Open maintenance', 'maintenance', requests, 'No open maintenance requests.')}
+      ${panel('Arrivals today', 'arrive', arrivals, 'No arrivals today.')}
+      ${panel('Departures today', 'depart', departures, 'No departures today.')}
     </div>`;
   afterRender(fresh);
 }
 
 // ---------------------------------------------------------------------------
-// List view
+// Calendar: rooms down the side, the next two weeks across
 // ---------------------------------------------------------------------------
+
+const CALENDAR_DAYS = 14;
+
+function renderCalendar(fresh) {
+  view.dataset.entity = '';
+  if (!state.rooms.length) {
+    view.innerHTML = `<div class="glass card rise"><div class="empty">${icon('rooms')}<p>Add some <a href="#/rooms">rooms</a> to see availability here.</p></div></div>`;
+    afterRender(fresh);
+    return;
+  }
+  calendarStart ??= today();
+  const start = calendarStart;
+  const end = addDays(start, CALENDAR_DAYS);
+  const todayStr = today();
+  const days = Array.from({ length: CALENDAR_DAYS }, (_, i) => addDays(start, i));
+  const weekend = (d) => [0, 6].includes(local(d).getDay());
+  const dayClass = (d) => `${weekend(d) ? ' weekend' : ''}${d === todayStr ? ' today' : ''}`;
+
+  const held = state.bookings.filter((b) => b.status === 'Confirmed' || b.status === 'Checked in');
+  const rows = [...state.rooms]
+    .sort(byNumber)
+    .map((room) => {
+      const closed = room.status !== 'Active';
+      const cells = days
+        .map((d) => {
+          const blocked = closed || d < todayStr;
+          return `<button type="button" class="cal-cell${dayClass(d)}" data-room="${esc(room.id)}" data-date="${d}" ${blocked ? 'disabled tabindex="-1"' : `aria-label="Book room ${esc(room.number)} on ${esc(fmtShort(d))}"`}></button>`;
+        })
+        .join('');
+      const bars = held
+        .filter((b) => b.roomId === room.id && b.checkIn < end && b.checkOut > start)
+        .map((b) => {
+          const from = Math.max(0, daysBetween(start, b.checkIn));
+          const to = Math.min(CALENDAR_DAYS, daysBetween(start, b.checkOut));
+          const cutLeft = b.checkIn < start ? ' cut-left' : '';
+          const cutRight = b.checkOut > end ? ' cut-right' : '';
+          const tone = b.status === 'Checked in' ? 'in' : 'confirmed';
+          return `<button type="button" class="cal-item ${tone}${cutLeft}${cutRight}" data-booking="${esc(b.id)}" data-from="${from + 1}" data-to="${to + 1}"
+            title="${esc(`${b.guestName} · ${fmtShort(b.checkIn)} → ${fmtShort(b.checkOut)} · ${b.status}`)}"><span>${esc(b.guestName)}</span><small>${esc(plural(b.nights, 'night'))}</small></button>`;
+        })
+        .join('');
+      return `
+        <div class="cal-row${closed ? ' closed' : ''}">
+          <div class="cal-room"><strong>${esc(room.number)}</strong><span class="sub">${esc(closed ? 'Out of service' : room.type)}</span></div>
+          ${cells}
+          <div class="cal-bars">${bars}</div>
+        </div>`;
+    })
+    .join('');
+
+  const range = `${fmtShort(start)} – ${fmtDate(addDays(start, CALENDAR_DAYS - 1))}`;
+  view.innerHTML = `
+    <div class="glass cal-toolbar rise">
+      <div class="cal-nav">
+        <button type="button" class="icon-btn" data-cal="prev" aria-label="Previous week" title="Previous week">${icon('left')}</button>
+        <button type="button" class="btn small" data-cal="today">Today</button>
+        <button type="button" class="icon-btn" data-cal="next" aria-label="Next week" title="Next week">${icon('right')}</button>
+        <strong class="cal-range">${esc(range)}</strong>
+      </div>
+      <div class="cal-legend">
+        <span><i class="dot confirmed"></i>Confirmed</span>
+        <span><i class="dot in"></i>Checked in</span>
+        <span><i class="dot closed"></i>Out of service</span>
+      </div>
+    </div>
+    <div class="glass card cal-card rise">
+      <div class="cal-scroll">
+        <div class="cal">
+          <div class="cal-row cal-head">
+            <div class="cal-room"><span class="sub">Room</span></div>
+            ${days.map((d) => `<div class="cal-day${dayClass(d)}"><span>${esc(fmtWeekday(d))}</span><strong>${local(d).getDate()}</strong></div>`).join('')}
+          </div>
+          ${rows}
+        </div>
+      </div>
+    </div>`;
+
+  // Each booking bar spans the nights it covers.
+  for (const bar of view.querySelectorAll('.cal-item')) bar.style.gridColumn = `${bar.dataset.from} / ${bar.dataset.to}`;
+  afterRender(fresh);
+}
+
+// ---------------------------------------------------------------------------
+// Lists (tables, or cards for rooms)
+// ---------------------------------------------------------------------------
+
+function actionButtons(ent, r) {
+  const mine = (ent.actions ?? []).filter((a) => a.when(r));
+  const text = mine
+    .filter((a) => !a.icon)
+    .map((a) => `<button type="button" class="btn small accent" data-act="${a.id}" data-id="${esc(r.id)}">${esc(a.label)}</button>`);
+  const icons = mine
+    .filter((a) => a.icon)
+    .map(
+      (a) =>
+        `<button type="button" class="icon-btn${a.danger ? ' danger' : ''}" data-act="${a.id}" data-id="${esc(r.id)}" title="${esc(a.title)}" aria-label="${esc(a.title)}">${icon(a.icon)}</button>`,
+    );
+  return [
+    ...text,
+    ...icons,
+    `<button type="button" class="icon-btn" data-act="edit" data-id="${esc(r.id)}" aria-label="Edit ${esc(ent.singular.toLowerCase())}" title="Edit">${icon('edit')}</button>`,
+    `<button type="button" class="icon-btn danger" data-act="delete" data-id="${esc(r.id)}" aria-label="Delete ${esc(ent.singular.toLowerCase())}" title="Delete">${icon('trash')}</button>`,
+  ].join('');
+}
+
+function roomCard(ent, r) {
+  return `
+    <article class="glass room-card spot rise">
+      <div class="room-head type-${esc(r.type.toLowerCase())}">
+        <span class="room-no">${esc(r.number)}</span><span class="room-type">${esc(r.type)}</span>
+      </div>
+      <div class="room-body">
+        <div class="room-status">${badge(r.today)}${r.guestName ? `<span class="room-guest">${esc(r.guestName)}</span>` : ''}</div>
+        <div class="room-meta"><span>${icon('guests')} Sleeps ${r.capacity}</span><strong>${money.format(r.rate)}<small> / night</small></strong></div>
+        ${r.description ? `<p class="room-desc">${esc(r.description)}</p>` : ''}
+      </div>
+      <div class="room-actions">${actionButtons(ent, r)}</div>
+    </article>`;
+}
 
 function renderList(name, fresh) {
   const ent = ENTITIES[name];
   view.dataset.entity = name;
-  const rows = [...state[name]].sort(ent.sort);
-  subtitleEl.textContent = `${rows.length} ${(rows.length === 1 ? ent.singular : ent.plural).toLowerCase()}`;
+  const all = [...state[name]].sort(ent.sort);
+  const active = ent.filters ? (ent.filters.find((f) => f.id === filterState[name]) ?? ent.filters[0]) : null;
+  const rows = active ? all.filter(active.test) : all;
+  subtitleEl.textContent = `${all.length} ${(all.length === 1 ? ent.singular : ent.plural).toLowerCase()}`;
+
+  const chips = ent.filters
+    ? `<div class="chips rise">${ent.filters
+        .map((f) => `<button type="button" class="chip${f === active ? ' on' : ''}" data-filter="${f.id}">${esc(f.label)}<span>${all.filter(f.test).length}</span></button>`)
+        .join('')}</div>`
+    : '';
 
   if (!rows.length) {
-    view.innerHTML = `<div class="glass card rise"><div class="empty">${icon('inbox')}<p>No ${esc(ent.plural.toLowerCase())} yet. Use <strong>Add ${esc(ent.singular.toLowerCase())}</strong> to create one.</p></div></div>`;
+    view.innerHTML = `${chips}<div class="glass card rise"><div class="empty">${icon('inbox')}<p>${
+      all.length ? 'Nothing in this view.' : `No ${esc(ent.plural.toLowerCase())} yet. Use <strong>${esc(ent.addLabel)}</strong> to create one.`
+    }</p></div></div>`;
     afterRender(fresh);
     return;
   }
 
-  const actionButtons = (r) =>
-    [
-      ...(ent.actions ?? [])
-        .filter((a) => a.when(r))
-        .map((a) => `<button type="button" class="btn small accent" data-act="${a.id}" data-id="${esc(r.id)}">${esc(a.label)}</button>`),
-      `<button type="button" class="icon-btn" data-act="edit" data-id="${esc(r.id)}" aria-label="Edit ${esc(ent.singular.toLowerCase())}" title="Edit">${icon('edit')}</button>`,
-      `<button type="button" class="icon-btn danger" data-act="delete" data-id="${esc(r.id)}" aria-label="Delete ${esc(ent.singular.toLowerCase())}" title="Delete">${icon('trash')}</button>`,
-    ].join('');
-
-  view.innerHTML = `
-    <div class="glass card list-card rise">
-      <div class="table-wrap"><table>
-        <thead><tr>${ent.columns.map((c) => `<th class="${c.cls ?? ''}">${esc(c.label)}</th>`).join('')}<th></th></tr></thead>
-        <tbody>${rows
-          .map(
-            (r) =>
-              `<tr>${ent.columns.map((c) => `<td class="${c.cls ?? ''}">${c.render(r)}</td>`).join('')}<td class="actions"><div class="row-actions">${actionButtons(r)}</div></td></tr>`,
-          )
-          .join('')}</tbody>
-      </table></div>
-      <div class="empty" id="no-match" hidden>${icon('search')}<p>Nothing matches your search.</p></div>
-    </div>`;
+  if (ent.view === 'cards') {
+    view.innerHTML = `${chips}<div class="room-grid">${rows.map((r) => roomCard(ent, r)).join('')}</div>
+      <div class="empty" id="no-match" hidden>${icon('search')}<p>Nothing matches your search.</p></div>`;
+  } else {
+    view.innerHTML = `${chips}
+      <div class="glass card list-card rise">
+        <div class="table-wrap"><table>
+          <thead><tr>${ent.columns.map((c) => `<th class="${c.cls ?? ''}">${esc(c.label)}</th>`).join('')}<th></th></tr></thead>
+          <tbody>${rows
+            .map(
+              (r) =>
+                `<tr>${ent.columns.map((c) => `<td class="${c.cls ?? ''}">${c.render(r)}</td>`).join('')}<td class="actions"><div class="row-actions">${actionButtons(ent, r)}</div></td></tr>`,
+            )
+            .join('')}</tbody>
+        </table></div>
+        <div class="empty" id="no-match" hidden>${icon('search')}<p>Nothing matches your search.</p></div>
+      </div>`;
+  }
   afterRender(fresh);
   applySearch();
 }
@@ -745,9 +1030,9 @@ function renderList(name, fresh) {
 function applySearch() {
   const q = searchEl.value.trim().toLowerCase();
   let shown = 0;
-  for (const tr of view.querySelectorAll('tbody tr')) {
-    const hit = !q || tr.textContent.toLowerCase().includes(q);
-    tr.hidden = !hit;
+  for (const el of view.querySelectorAll('tbody tr, .room-card')) {
+    const hit = !q || el.textContent.toLowerCase().includes(q);
+    el.hidden = !hit;
     if (hit) shown++;
   }
   const none = $('#no-match');
@@ -756,7 +1041,45 @@ function applySearch() {
 
 searchEl.addEventListener('input', applySearch);
 
+async function setBookingStatus(id, status) {
+  try {
+    await api('POST', `/api/bookings/${id}/status`, { status });
+    toast(STATUS_TOAST[status]);
+    await route();
+  } catch (err) {
+    if (err.status !== 401) toast(err.message, true);
+  }
+}
+
 view.addEventListener('click', async (e) => {
+  // Dashboard quick actions
+  const quick = e.target.closest('button[data-bstatus]');
+  if (quick) return setBookingStatus(quick.dataset.id, quick.dataset.bstatus);
+
+  // Calendar
+  const nav = e.target.closest('[data-cal]');
+  if (nav) {
+    calendarStart = nav.dataset.cal === 'today' ? today() : addDays(calendarStart ?? today(), nav.dataset.cal === 'next' ? 7 : -7);
+    return renderCalendar(false);
+  }
+  const bar = e.target.closest('.cal-item');
+  if (bar) {
+    const booking = state.bookings.find((b) => b.id === bar.dataset.booking);
+    return booking && openForm('bookings', booking);
+  }
+  const cell = e.target.closest('.cal-cell');
+  if (cell && !cell.disabled) {
+    return openForm('bookings', null, { roomId: cell.dataset.room, checkIn: cell.dataset.date, checkOut: addDays(cell.dataset.date, 1) });
+  }
+
+  // List filters
+  const chip = e.target.closest('[data-filter]');
+  if (chip) {
+    filterState[view.dataset.entity] = chip.dataset.filter;
+    return renderList(view.dataset.entity, false);
+  }
+
+  // Row and card actions
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
   const name = view.dataset.entity;
@@ -773,9 +1096,9 @@ view.addEventListener('click', async (e) => {
       toast(`${ent.singular} deleted`);
     } else {
       const action = ent.actions.find((a) => a.id === act);
+      if (action.open) return action.open(rec);
       if (action.confirm && !confirm(action.confirm)) return;
-      await api('PUT', `/api/${name}/${rec.id}`, action.run(rec));
-      toast(action.done);
+      return setBookingStatus(rec.id, action.status);
     }
     await route();
   } catch (err) {
@@ -784,10 +1107,11 @@ view.addEventListener('click', async (e) => {
 });
 
 addBtn.addEventListener('click', () => {
-  const ent = ENTITIES[shownName];
+  const name = ENTITIES[shownName] ? shownName : 'bookings';
+  const ent = ENTITIES[name];
   const missing = ent.needs?.find((k) => !state[k].length);
   if (missing) return toast(`Add a ${ENTITIES[missing].singular.toLowerCase()} first`, true);
-  openForm(shownName);
+  openForm(name);
 });
 
 // ---------------------------------------------------------------------------
@@ -800,7 +1124,7 @@ function optionsHtml(f, ctx, selected) {
   else if (f.ref) options = [...state[f.ref]].sort(byLabel).map((r) => ({ value: r.id, label: r.label }));
   else options = f.choices.map((c) => ({ value: c, label: c }));
 
-  const blank = f.choices ? '' : `<option value="">${f.required ? 'Select…' : '— None —'}</option>`;
+  const blank = f.choices || f.noBlank ? '' : `<option value="">${f.required ? 'Select…' : '— None —'}</option>`;
   return (
     blank +
     options.map((o) => `<option value="${esc(o.value)}"${o.value === selected ? ' selected' : ''}>${esc(o.label)}</option>`).join('')
@@ -808,6 +1132,8 @@ function optionsHtml(f, ctx, selected) {
 }
 
 function fieldHtml(f, value, ctx) {
+  if (f.type === 'info') return `<div class="field wide" data-info="${f.key}"><p class="hint"></p></div>`;
+
   const common = `id="f_${f.key}" name="${f.key}"${f.required ? ' required' : ''}`;
   let control;
   if (f.ref || f.choices || f.options) {
@@ -817,12 +1143,12 @@ function fieldHtml(f, value, ctx) {
   } else {
     const type = f.type ?? 'text';
     let attrs = '';
-    if (type === 'number') attrs = ` min="0" step="${f.step ?? 'any'}"`;
-    else if (type === 'month') attrs = ' pattern="\\d{4}-\\d{2}" placeholder="YYYY-MM"';
+    if (type === 'number') attrs = ` min="${f.min ?? 0}" step="${f.step ?? 'any'}"`;
     else attrs = ' maxlength="200"';
     control = `<input type="${type}" ${common} value="${esc(value)}"${attrs}>`;
   }
-  return `<label class="field${f.wide ? ' wide' : ''}"><span class="field-label">${esc(f.label)}${f.required ? ' *' : ''}</span>${control}</label>`;
+  const group = f.group ? ` data-group="${f.group}"` : '';
+  return `<label class="field${f.wide ? ' wide' : ''}"${group}${f.hidden ? ' hidden' : ''}><span class="field-label">${esc(f.label)}${f.required ? ' *' : ''}</span>${control}</label>`;
 }
 
 let closeTimer;
@@ -835,24 +1161,28 @@ function closeDialog() {
   }, 200);
 }
 
-function openForm(name, rec = null) {
+// `preset` fills in a new record, for example the room and night clicked on the calendar.
+function openForm(name, rec = null, preset = {}) {
   const ent = ENTITIES[name];
   const isNew = !rec;
 
   const values = {};
   for (const f of ent.fields) {
-    values[f.key] = rec ? (rec[f.key] ?? '') : f.initial ? f.initial() : f.choices ? f.choices[0] : '';
+    if (f.type === 'info') continue;
+    if (rec) values[f.key] = rec[f.key] ?? '';
+    else if (f.key in preset) values[f.key] = preset[f.key];
+    else values[f.key] = f.initial ? f.initial() : f.choices ? f.choices[0] : '';
   }
-  const initialCtx = { rec: rec ?? {}, val: (k) => values[k] };
+  const initialCtx = { rec: rec ?? {}, preset, val: (k) => values[k] };
 
   dialog.innerHTML = `
     <form id="form">
-      <h2>${isNew ? 'Add' : 'Edit'} ${esc(ent.singular.toLowerCase())}</h2>
+      <h2>${isNew ? esc(ent.addLabel) : `Edit ${esc(ent.singular.toLowerCase())}`}</h2>
       <div class="fields">${ent.fields.map((f) => fieldHtml(f, values[f.key], initialCtx)).join('')}</div>
       <p class="form-error" role="alert"></p>
       <div class="form-actions">
         <button type="button" class="btn" data-close>Cancel</button>
-        <button type="submit" class="btn primary"><span>Save</span><span class="spinner" aria-hidden="true"></span></button>
+        <button type="submit" class="btn primary"><span>${esc(ent.saveLabel ?? 'Save')}</span><span class="spinner" aria-hidden="true"></span></button>
       </div>
     </form>`;
 
@@ -861,17 +1191,7 @@ function openForm(name, rec = null) {
   const submitBtn = $('button[type="submit"]', form);
   $('[data-close]', form).addEventListener('click', closeDialog);
 
-  // Re-filter dependent selects (e.g. units of the chosen property) and run entity-specific prefills.
-  form.addEventListener('change', (e) => {
-    const key = e.target.name;
-    for (const f of ent.fields) {
-      if (f.dependsOn !== key) continue;
-      const select = form.elements.namedItem(f.key);
-      const liveCtx = { rec: rec ?? {}, val: (k) => form.elements.namedItem(k)?.value ?? '' };
-      select.innerHTML = optionsHtml(f, liveCtx, select.value);
-    }
-    ent.onChange?.(key, form, isNew);
-  });
+  form.addEventListener('change', (e) => ent.onChange?.(e.target.name, form, isNew));
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -879,10 +1199,11 @@ function openForm(name, rec = null) {
     form.classList.add('is-busy');
     submitBtn.disabled = true;
     try {
-      const body = Object.fromEntries(new FormData(form));
+      let body = Object.fromEntries(new FormData(form));
+      if (ent.toBody) body = ent.toBody(body);
       await api(isNew ? 'POST' : 'PUT', `/api/${name}${isNew ? '' : `/${rec.id}`}`, body);
       closeDialog();
-      toast(isNew ? `${ent.singular} added` : 'Changes saved');
+      toast(isNew ? `${ent.singular} saved` : 'Changes saved');
       await route();
     } catch (err) {
       if (err.status !== 401) errorEl.textContent = err.message;
@@ -895,6 +1216,7 @@ function openForm(name, rec = null) {
   clearTimeout(closeTimer);
   dialog.classList.remove('closing');
   if (!dialog.open) dialog.showModal();
+  ent.afterOpen?.(form, rec, isNew, preset);
 }
 
 // Escape and backdrop clicks close the dialog with its exit animation.

@@ -34,10 +34,10 @@ const cookieHeader = (res) => ({ Cookie: sessionCookie(res).split(';')[0] });
 
 test('the API requires a session, but the page itself does not', async () => {
   await withServer(async ({ base }) => {
-    for (const url of ['/api/properties', '/api/dashboard', '/api/nothing']) {
+    for (const url of ['/api/guests', '/api/dashboard', '/api/nothing']) {
       assert.equal((await fetch(base + url)).status, 401, url);
     }
-    assert.equal((await fetch(`${base}/api/properties`, { method: 'POST', headers: JSON_HEADERS, body: '{}' })).status, 401);
+    assert.equal((await fetch(`${base}/api/guests`, { method: 'POST', headers: JSON_HEADERS, body: '{}' })).status, 401);
     assert.equal((await fetch(`${base}/`)).status, 200);
 
     const status = await (await fetch(`${base}/api/auth/status`)).json();
@@ -59,7 +59,7 @@ test('first-run setup creates the account, signs in, and then closes', async () 
     assert.match(cookie, /SameSite=Strict/);
 
     const headers = cookieHeader(res);
-    assert.equal((await fetch(`${base}/api/properties`, { headers })).status, 200);
+    assert.equal((await fetch(`${base}/api/guests`, { headers })).status, 200);
     const status = await (await fetch(`${base}/api/auth/status`, { headers })).json();
     assert.deepEqual(status, { setupRequired: false, user: { username: 'Alice' } });
 
@@ -98,7 +98,7 @@ test('logout ends the session on the server, not just in the browser', async () 
     const out = await post('logout', {}, headers);
     assert.equal(out.status, 200);
     assert.match(sessionCookie(out), /Max-Age=0/);
-    assert.equal((await fetch(`${base}/api/properties`, { headers })).status, 401);
+    assert.equal((await fetch(`${base}/api/guests`, { headers })).status, 401);
   });
 });
 
@@ -106,15 +106,15 @@ test('signing out ends every session for the account', async () => {
   await withServer(async ({ base, post }) => {
     const laptop = cookieHeader(await post('setup', ALICE));
     const phone = cookieHeader(await post('login', ALICE));
-    assert.equal((await fetch(`${base}/api/properties`, { headers: laptop })).status, 200);
-    assert.equal((await fetch(`${base}/api/properties`, { headers: phone })).status, 200);
+    assert.equal((await fetch(`${base}/api/guests`, { headers: laptop })).status, 200);
+    assert.equal((await fetch(`${base}/api/guests`, { headers: phone })).status, 200);
 
     await post('logout', {}, phone);
-    assert.equal((await fetch(`${base}/api/properties`, { headers: laptop })).status, 401);
+    assert.equal((await fetch(`${base}/api/guests`, { headers: laptop })).status, 401);
 
     // Signing in again works and gets a working session.
     const again = cookieHeader(await post('login', ALICE));
-    assert.equal((await fetch(`${base}/api/properties`, { headers: again })).status, 200);
+    assert.equal((await fetch(`${base}/api/guests`, { headers: again })).status, 200);
   });
 });
 
@@ -123,7 +123,7 @@ test('forged, tampered and expired session cookies are rejected', async () => {
     const res = await post('setup', ALICE);
     const token = sessionCookie(res).split(';')[0].slice('pms_session='.length);
     const [body, mac] = token.split('.');
-    const status = (cookie) => fetch(`${base}/api/properties`, { headers: { Cookie: `pms_session=${cookie}` } }).then((r) => r.status);
+    const status = (cookie) => fetch(`${base}/api/guests`, { headers: { Cookie: `pms_session=${cookie}` } }).then((r) => r.status);
 
     assert.equal(await status(token), 200);
     assert.equal(await status(`${body}.${mac.slice(0, -2)}AA`), 401); // signature altered

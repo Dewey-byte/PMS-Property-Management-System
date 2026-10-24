@@ -9,11 +9,21 @@ const { storageFromEnv, createLock } = require('./storage');
 const { HttpError, SECURITY_HEADERS, sendJson, readJson, assertSameOrigin } = require('./http-utils');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const EXPIRY_WARNING_DAYS = 60;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_STAY_NIGHTS = 365;
+const FORECAST_DAYS = 7;
 
-const COLLECTIONS = ['properties', 'units', 'tenants', 'leases', 'payments', 'maintenance'];
-const PRIORITY_RANK = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
+const COLLECTIONS = ['rooms', 'guests', 'bookings', 'payments'];
+
+// A booking in one of these states holds its room for the nights it covers.
+const ACTIVE_STATUSES = ['Confirmed', 'Checked in'];
+// Which status a booking may move to from each status (the quick actions use these).
+const STATUS_MOVES = {
+  Confirmed: ['Checked in', 'Cancelled'],
+  'Checked in': ['Checked out'],
+  'Checked out': [],
+  Cancelled: ['Confirmed'],
+};
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -30,85 +40,46 @@ const MIME = {
 // ---------------------------------------------------------------------------
 
 const SCHEMAS = {
-  properties: {
-    name: { type: 'string', required: true },
-    address: { type: 'string', required: true },
-    type: { type: 'enum', values: ['Apartment', 'House', 'Condo', 'Commercial', 'Other'], default: 'Apartment' },
-    notes: { type: 'string', long: true },
-  },
-  units: {
-    propertyId: { type: 'ref', ref: 'properties', required: true },
+  rooms: {
     number: { type: 'string', required: true },
-    bedrooms: { type: 'number', min: 0, default: 0 },
-    bathrooms: { type: 'number', min: 0, default: 1 },
-    rent: { type: 'number', min: 0, required: true },
+    type: { type: 'enum', values: ['Standard', 'Twin', 'Deluxe', 'Family', 'Suite'], default: 'Standard' },
+    capacity: { type: 'number', min: 1, max: 20, integer: true, default: 2 },
+    rate: { type: 'number', min: 0, required: true },
+    status: { type: 'enum', values: ['Active', 'Out of service'], default: 'Active' },
+    description: { type: 'string', long: true },
   },
-  tenants: {
+  guests: {
     name: { type: 'string', required: true },
     email: { type: 'string', format: 'email' },
     phone: { type: 'string' },
     notes: { type: 'string', long: true },
   },
-  leases: {
-    unitId: { type: 'ref', ref: 'units', required: true },
-    tenantId: { type: 'ref', ref: 'tenants', required: true },
-    startDate: { type: 'date', required: true },
-    endDate: { type: 'date', required: true },
-    rent: { type: 'number', min: 0, required: true },
-    deposit: { type: 'number', min: 0, default: 0 },
-    status: { type: 'enum', values: ['Active', 'Ended'], default: 'Active' },
+  bookings: {
+    roomId: { type: 'ref', ref: 'rooms', required: true },
+    guestId: { type: 'ref', ref: 'guests', required: true },
+    checkIn: { type: 'date', required: true },
+    checkOut: { type: 'date', required: true },
+    adults: { type: 'number', min: 1, max: 20, integer: true, default: 1 },
+    children: { type: 'number', min: 0, max: 20, integer: true, default: 0 },
+    nightlyRate: { type: 'number', min: 0 }, // left blank, it becomes the room's rate
+    status: { type: 'enum', values: ['Confirmed', 'Checked in', 'Checked out', 'Cancelled'], default: 'Confirmed' },
+    notes: { type: 'string', long: true },
   },
   payments: {
-    leaseId: { type: 'ref', ref: 'leases', required: true },
+    bookingId: { type: 'ref', ref: 'bookings', required: true },
     date: { type: 'date', required: true },
-    period: { type: 'month', required: true },
     amount: { type: 'number', min: 0.01, required: true },
-    method: { type: 'enum', values: ['Bank transfer', 'Cash', 'Check', 'Card', 'Online', 'Other'], default: 'Bank transfer' },
+    method: { type: 'enum', values: ['Card', 'Cash', 'Bank transfer', 'Online', 'Other'], default: 'Card' },
     note: { type: 'string' },
-  },
-  maintenance: {
-    propertyId: { type: 'ref', ref: 'properties', required: true },
-    unitId: { type: 'ref', ref: 'units' },
-    title: { type: 'string', required: true },
-    description: { type: 'string', long: true },
-    priority: { type: 'enum', values: ['Low', 'Medium', 'High', 'Urgent'], default: 'Medium' },
-    status: { type: 'enum', values: ['Open', 'In Progress', 'Resolved'], default: 'Open' },
-    reportedDate: { type: 'date', default: () => localDate() },
-    cost: { type: 'number', min: 0, default: 0 },
   },
 };
 
 // Records that must be removed before a record can be deleted: [collection, foreign key, noun].
 const DEPENDENTS = {
-  properties: [['units', 'propertyId', 'unit'], ['maintenance', 'propertyId', 'maintenance request']],
-  units: [['leases', 'unitId', 'lease'], ['maintenance', 'unitId', 'maintenance request']],
-  tenants: [['leases', 'tenantId', 'lease']],
-  leases: [['payments', 'leaseId', 'payment']],
+  rooms: [['bookings', 'roomId', 'booking']],
+  guests: [['bookings', 'guestId', 'booking']],
+  bookings: [['payments', 'bookingId', 'payment']],
   payments: [],
-  maintenance: [],
-};
-
-// Cross-record business rules, checked after field validation.
-const RULES = {
-  units(v, data, id) {
-    const clash = data.units.find(
-      (u) => u.id !== id && u.propertyId === v.propertyId && u.number.toLowerCase() === v.number.toLowerCase(),
-    );
-    if (clash) throw new HttpError(409, `Unit ${v.number} already exists in this property`);
-  },
-  leases(v, data, id) {
-    if (v.endDate < v.startDate) throw new HttpError(400, 'End date must be on or after the start date');
-    if (v.status !== 'Active') return;
-    const overlap = data.leases.find(
-      (l) => l.id !== id && l.unitId === v.unitId && l.status === 'Active' && l.startDate <= v.endDate && l.endDate >= v.startDate,
-    );
-    if (overlap) throw new HttpError(409, 'This unit already has an active lease overlapping those dates');
-  },
-  maintenance(v, data) {
-    if (!v.unitId) return;
-    const unit = data.units.find((u) => u.id === v.unitId);
-    if (unit.propertyId !== v.propertyId) throw new HttpError(400, 'The selected unit does not belong to the selected property');
-  },
 };
 
 // ---------------------------------------------------------------------------
@@ -119,6 +90,7 @@ const pad = (n) => String(n).padStart(2, '0');
 const localDate = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const round2 = (n) => Math.round(n * 100) / 100;
 const sumBy = (items, fn) => round2(items.reduce((total, item) => total + fn(item), 0));
+const byRoomNumber = (a, b) => String(a.roomNumber).localeCompare(String(b.roomNumber), undefined, { numeric: true });
 
 function addDays(dateStr, n) {
   const d = new Date(`${dateStr}T00:00:00Z`);
@@ -131,32 +103,81 @@ function daysBetween(from, to) {
 }
 
 function isDate(s) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
   const d = new Date(`${s}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
-
-const isCurrent = (lease, today) => lease.status === 'Active' && lease.startDate <= today && lease.endDate >= today;
 
 function fieldLabel(key) {
   const s = key.replace(/Id$/, '').replace(/([A-Z])/g, ' $1').toLowerCase();
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// "Today" comes from the browser, so arrivals and departures follow the hotel's own time zone even
+// though a serverless host runs in UTC. Without it (or if it is invalid) the server's date is used.
+function todayFrom(url) {
+  const asked = url.searchParams.get('today');
+  return isDate(asked) ? asked : localDate();
+}
+
+const holdsRoom = (booking) => ACTIVE_STATUSES.includes(booking.status);
+
+// A stay covers the nights from check-in up to, but not including, the check-out day,
+// so one guest can leave the morning the next arrives.
+function clashingBooking(data, roomId, checkIn, checkOut, excludeId) {
+  return data.bookings.find(
+    (b) => b.id !== excludeId && b.roomId === roomId && holdsRoom(b) && b.checkIn < checkOut && b.checkOut > checkIn,
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Store: the property data, held in memory for the length of one request.
+// Business rules, checked after field validation.
+// ---------------------------------------------------------------------------
+
+const RULES = {
+  rooms(v, data, id) {
+    const clash = data.rooms.find((r) => r.id !== id && r.number.toLowerCase() === v.number.toLowerCase());
+    if (clash) throw new HttpError(409, `Room ${v.number} already exists`);
+  },
+  bookings(v, data, id, existing) {
+    const nights = daysBetween(v.checkIn, v.checkOut);
+    if (nights < 1) throw new HttpError(400, 'Check-out must be after check-in');
+    if (nights > MAX_STAY_NIGHTS) throw new HttpError(400, `A stay can be at most ${MAX_STAY_NIGHTS} nights`);
+
+    const room = data.rooms.find((r) => r.id === v.roomId);
+    if (v.nightlyRate === null) v.nightlyRate = room.rate;
+    if (!holdsRoom(v)) return; // checked-out and cancelled bookings no longer hold the room
+
+    const party = v.adults + v.children;
+    if (party > room.capacity) {
+      throw new HttpError(400, `Room ${room.number} sleeps ${room.capacity} at most, but this booking has ${party} guests`);
+    }
+    if (room.status !== 'Active' && existing?.roomId !== v.roomId) {
+      throw new HttpError(409, `Room ${room.number} is out of service`);
+    }
+    const clash = clashingBooking(data, v.roomId, v.checkIn, v.checkOut, id);
+    if (clash) throw new HttpError(409, `Room ${room.number} is already booked from ${clash.checkIn} to ${clash.checkOut}`);
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Store: the hotel's data, held in memory for the length of one request.
 // ---------------------------------------------------------------------------
 
 function createStore(storage) {
   const data = Object.fromEntries(COLLECTIONS.map((c) => [c, []]));
+  let extra = {};
   return {
     data,
     // Re-read before every request: another serverless instance may have saved since the last one.
     async load() {
       const saved = (await storage.read('data')) ?? {};
       for (const c of COLLECTIONS) data[c] = Array.isArray(saved[c]) ? saved[c] : [];
+      // Anything else already in storage (such as records from an earlier version of the app) is
+      // carried along untouched, never silently dropped by the next save.
+      extra = Object.fromEntries(Object.entries(saved).filter(([key]) => !COLLECTIONS.includes(key)));
     },
-    save: () => storage.write('data', data),
+    save: () => storage.write('data', { ...extra, ...data }),
   };
 }
 
@@ -191,17 +212,14 @@ function validate(collection, input, data) {
       case 'number': {
         const n = typeof v === 'number' || typeof v === 'string' ? Number(v) : NaN;
         if (!Number.isFinite(n)) throw new HttpError(400, `${label} must be a number`);
+        if (spec.integer && !Number.isInteger(n)) throw new HttpError(400, `${label} must be a whole number`);
         if (spec.min !== undefined && n < spec.min) throw new HttpError(400, `${label} must be at least ${spec.min}`);
-        if (n > 1e9) throw new HttpError(400, `${label} is too large`);
+        if (n > (spec.max ?? 1e9)) throw new HttpError(400, `${label} must be at most ${spec.max ?? 1e9}`);
         out[key] = round2(n);
         break;
       }
       case 'date':
-        if (typeof v !== 'string' || !isDate(v)) throw new HttpError(400, `${label} must be a valid date (YYYY-MM-DD)`);
-        out[key] = v;
-        break;
-      case 'month':
-        if (typeof v !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(v)) throw new HttpError(400, `${label} must be a month (YYYY-MM)`);
+        if (!isDate(v)) throw new HttpError(400, `${label} must be a valid date (YYYY-MM-DD)`);
         out[key] = v;
         break;
       case 'enum':
@@ -220,7 +238,7 @@ function validate(collection, input, data) {
 async function saveRecord(store, collection, input, existing) {
   const { data } = store;
   const value = validate(collection, input, data);
-  RULES[collection]?.(value, data, existing?.id);
+  RULES[collection]?.(value, data, existing?.id, existing);
   const now = new Date().toISOString();
   if (existing) {
     Object.assign(existing, value, { updatedAt: now });
@@ -245,111 +263,155 @@ async function removeRecord(store, collection, record) {
   await store.save();
 }
 
-// ---------------------------------------------------------------------------
-// Read model: adds display fields to records and builds the dashboard.
-// ---------------------------------------------------------------------------
+// A new booking may bring its guest along: the guest and the booking are saved together or not at all.
+async function createBooking(store, body) {
+  const { data } = store;
+  if (body.newGuest === undefined) return saveRecord(store, 'bookings', body, null);
 
-function buildView(data) {
-  const today = localDate();
-  const byId = (name) => new Map(data[name].map((r) => [r.id, r]));
-  const properties = byId('properties');
-  const units = byId('units');
-  const tenants = byId('tenants');
-  const leases = byId('leases');
-
-  const unitLabel = (unitId) => {
-    const u = units.get(unitId);
-    return u ? `${properties.get(u.propertyId)?.name ?? '?'} · ${u.number}` : '';
-  };
-  const tenantName = (tenantId) => tenants.get(tenantId)?.name ?? '';
-
-  const currentLeases = data.leases.filter((l) => isCurrent(l, today));
-  const leaseByUnit = new Map(currentLeases.map((l) => [l.unitId, l]));
-  const unitsByTenant = new Map();
-  for (const l of currentLeases) {
-    unitsByTenant.set(l.tenantId, [...(unitsByTenant.get(l.tenantId) ?? []), unitLabel(l.unitId)]);
+  if (body.guestId) throw new HttpError(400, 'Choose an existing guest or enter a new one, not both');
+  const input = body.newGuest && typeof body.newGuest === 'object' && !Array.isArray(body.newGuest) ? body.newGuest : {};
+  const now = new Date().toISOString();
+  const guest = { id: crypto.randomUUID(), ...validate('guests', input, data), createdAt: now, updatedAt: now };
+  data.guests.push(guest);
+  try {
+    return await saveRecord(store, 'bookings', { ...body, guestId: guest.id }, null);
+  } catch (err) {
+    data.guests = data.guests.filter((g) => g !== guest);
+    throw err;
   }
+}
+
+async function changeBookingStatus(store, record, input) {
+  const status = typeof input.status === 'string' ? input.status : '';
+  if (!STATUS_MOVES[record.status].includes(status)) {
+    const options = STATUS_MOVES[record.status];
+    throw new HttpError(409, options.length ? `A ${record.status.toLowerCase()} booking can only become: ${options.join(', ')}` : `A ${record.status.toLowerCase()} booking cannot be changed`);
+  }
+  // Re-running the rules matters when a cancelled booking is reinstated: its room may have been rebooked.
+  const next = { ...record, status };
+  RULES.bookings(next, store.data, record.id, record);
+  record.status = status;
+  record.updatedAt = new Date().toISOString();
+  await store.save();
+  return record;
+}
+
+// ---------------------------------------------------------------------------
+// Read model: adds display fields to records, answers availability, builds the dashboard.
+// ---------------------------------------------------------------------------
+
+function availableRooms(data, { checkIn, checkOut, guests, excludeId }) {
+  return data.rooms
+    .filter((r) => r.status === 'Active' && r.capacity >= guests && !clashingBooking(data, r.id, checkIn, checkOut, excludeId))
+    .sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }))
+    .map((r) => ({
+      id: r.id,
+      number: r.number,
+      type: r.type,
+      capacity: r.capacity,
+      rate: r.rate,
+      label: `Room ${r.number}`,
+      total: round2(r.rate * daysBetween(checkIn, checkOut)),
+    }));
+}
+
+function buildView(data, today) {
+  const byId = (name) => new Map(data[name].map((r) => [r.id, r]));
+  const rooms = byId('rooms');
+  const guests = byId('guests');
+  const bookings = byId('bookings');
+
+  const guestName = (id) => guests.get(id)?.name ?? '';
+  const roomNumber = (id) => rooms.get(id)?.number ?? '';
+  const nightsOf = (b) => daysBetween(b.checkIn, b.checkOut);
+
+  const paidByBooking = new Map();
+  for (const p of data.payments) paidByBooking.set(p.bookingId, round2((paidByBooking.get(p.bookingId) ?? 0) + p.amount));
+
+  const held = data.bookings.filter(holdsRoom);
+  const tonight = new Map(held.filter((b) => b.checkIn <= today && b.checkOut > today).map((b) => [b.roomId, b]));
+
+  const bookingView = (b) => {
+    const total = round2(nightsOf(b) * b.nightlyRate);
+    const paid = paidByBooking.get(b.id) ?? 0;
+    return {
+      ...b,
+      label: `${guestName(b.guestId)} · Room ${roomNumber(b.roomId)} · ${b.checkIn} → ${b.checkOut}`,
+      guestName: guestName(b.guestId),
+      roomNumber: roomNumber(b.roomId),
+      roomType: rooms.get(b.roomId)?.type ?? '',
+      nights: nightsOf(b),
+      total,
+      paid,
+      balance: Math.max(0, round2(total - paid)),
+    };
+  };
 
   const decorators = {
-    properties: (r) => ({ ...r, label: r.name }),
-    units: (r) => {
-      const lease = leaseByUnit.get(r.id);
+    rooms: (r) => {
+      const b = tonight.get(r.id);
       return {
         ...r,
-        label: unitLabel(r.id),
-        propertyName: properties.get(r.propertyId)?.name ?? '',
-        occupancy: lease ? 'Occupied' : 'Vacant',
-        tenantName: lease ? tenantName(lease.tenantId) : '',
+        label: `Room ${r.number}`,
+        today: r.status !== 'Active' ? 'Out of service' : b ? (b.status === 'Checked in' ? 'Occupied' : 'Reserved') : 'Vacant',
+        guestName: b ? guestName(b.guestId) : '',
+        bookingId: b?.id ?? null,
       };
     },
-    tenants: (r) => ({ ...r, label: r.name, currentUnits: (unitsByTenant.get(r.id) ?? []).join(', ') }),
-    leases: (r) => ({
-      ...r,
-      label: `${tenantName(r.tenantId)} — ${unitLabel(r.unitId)}`,
-      tenantName: tenantName(r.tenantId),
-      unitLabel: unitLabel(r.unitId),
-      expired: r.status === 'Active' && r.endDate < today,
-    }),
-    payments: (r) => {
-      const lease = leases.get(r.leaseId);
-      return { ...r, tenantName: lease ? tenantName(lease.tenantId) : '', unitLabel: lease ? unitLabel(lease.unitId) : '' };
+    guests: (g) => {
+      const mine = data.bookings.filter((b) => b.guestId === g.id && b.status !== 'Cancelled');
+      const upcoming = mine.filter((b) => b.status === 'Confirmed' && b.checkIn >= today).map((b) => b.checkIn).sort();
+      const past = mine.filter((b) => b.status === 'Checked out').map((b) => b.checkOut).sort();
+      return { ...g, label: g.name, stays: mine.length, nextArrival: upcoming[0] ?? '', lastVisit: past[past.length - 1] ?? '' };
     },
-    maintenance: (r) => ({
-      ...r,
-      propertyName: properties.get(r.propertyId)?.name ?? '',
-      unitNumber: units.get(r.unitId)?.number ?? '',
-    }),
+    bookings: bookingView,
+    payments: (p) => {
+      const b = bookings.get(p.bookingId);
+      return {
+        ...p,
+        guestName: b ? guestName(b.guestId) : '',
+        roomNumber: b ? roomNumber(b.roomId) : '',
+        stay: b ? `${b.checkIn} → ${b.checkOut}` : '',
+      };
+    },
   };
 
   function dashboard() {
-    const period = today.slice(0, 7);
-    const rentRoll = currentLeases.map((l) => {
-      const paid = sumBy(data.payments.filter((p) => p.leaseId === l.id && p.period === period), (p) => p.amount);
-      return {
-        leaseId: l.id,
-        tenantName: tenantName(l.tenantId),
-        unitLabel: unitLabel(l.unitId),
-        rent: l.rent,
-        paid,
-        balance: Math.max(0, round2(l.rent - paid)),
-        status: paid >= l.rent ? 'Paid' : paid > 0 ? 'Partial' : 'Unpaid',
-      };
+    const activeRooms = data.rooms.filter((r) => r.status === 'Active');
+    const activeIds = new Set(activeRooms.map((r) => r.id));
+
+    // Occupancy for tonight and the following nights.
+    const forecast = Array.from({ length: FORECAST_DAYS }, (_, i) => {
+      const date = addDays(today, i);
+      const occupied = new Set(held.filter((b) => b.checkIn <= date && b.checkOut > date && activeIds.has(b.roomId)).map((b) => b.roomId)).size;
+      return { date, occupied, rooms: activeRooms.length, rate: activeRooms.length ? Math.round((occupied / activeRooms.length) * 100) : 0 };
     });
 
-    const cutoff = addDays(today, EXPIRY_WARNING_DAYS);
-    const expiringLeases = data.leases
-      .filter((l) => l.status === 'Active' && l.endDate <= cutoff)
-      .sort((a, b) => a.endDate.localeCompare(b.endDate))
-      .map((l) => ({
-        leaseId: l.id,
-        tenantName: tenantName(l.tenantId),
-        unitLabel: unitLabel(l.unitId),
-        endDate: l.endDate,
-        daysLeft: daysBetween(today, l.endDate),
-      }));
+    const arrivals = data.bookings.filter((b) => b.checkIn === today && holdsRoom(b)).map(bookingView).sort(byRoomNumber);
+    const departures = data.bookings
+      .filter((b) => b.checkOut === today && (b.status === 'Checked in' || b.status === 'Checked out'))
+      .map(bookingView)
+      .sort(byRoomNumber);
+    const inHouse = data.bookings.filter((b) => b.status === 'Checked in');
+    const month = today.slice(0, 7);
 
-    const open = data.maintenance.filter((m) => m.status !== 'Resolved');
-    const openRequests = [...open]
-      .sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.reportedDate.localeCompare(b.reportedDate))
-      .slice(0, 8)
-      .map((m) => decorators.maintenance(m));
-
-    const totalUnits = data.units.length;
     return {
       today,
-      period,
-      totalProperties: data.properties.length,
-      totalUnits,
-      occupiedUnits: leaseByUnit.size,
-      occupancyRate: totalUnits ? Math.round((leaseByUnit.size / totalUnits) * 100) : 0,
-      monthlyRent: sumBy(currentLeases, (l) => l.rent),
-      collected: sumBy(data.payments.filter((p) => p.period === period), (p) => p.amount),
-      outstanding: sumBy(rentRoll, (r) => r.balance),
-      openMaintenance: open.length,
-      urgentMaintenance: open.filter((m) => m.priority === 'Urgent').length,
-      rentRoll,
-      expiringLeases,
-      openRequests,
+      totalRooms: data.rooms.length,
+      activeRooms: activeRooms.length,
+      outOfService: data.rooms.length - activeRooms.length,
+      occupiedTonight: forecast[0].occupied,
+      occupancyRate: forecast[0].rate,
+      inHouseGuests: inHouse.reduce((n, b) => n + b.adults + b.children, 0),
+      upcomingBookings: data.bookings.filter((b) => b.status === 'Confirmed' && b.checkIn > today).length,
+      revenueThisMonth: sumBy(data.payments.filter((p) => p.date.startsWith(month)), (p) => p.amount),
+      outstanding: sumBy(
+        data.bookings.filter((b) => b.status === 'Checked in' || b.status === 'Checked out').map(bookingView),
+        (b) => b.balance,
+      ),
+      arrivals,
+      departures,
+      forecast,
     };
   }
 
@@ -360,6 +422,18 @@ function buildView(data) {
 // HTTP layer
 // ---------------------------------------------------------------------------
 
+function parseAvailabilityQuery(url) {
+  const checkIn = url.searchParams.get('checkIn');
+  const checkOut = url.searchParams.get('checkOut');
+  if (!isDate(checkIn) || !isDate(checkOut)) throw new HttpError(400, 'Choose valid check-in and check-out dates');
+  const nights = daysBetween(checkIn, checkOut);
+  if (nights < 1) throw new HttpError(400, 'Check-out must be after check-in');
+  if (nights > MAX_STAY_NIGHTS) throw new HttpError(400, `A stay can be at most ${MAX_STAY_NIGHTS} nights`);
+  const guests = Number(url.searchParams.get('guests') ?? 1);
+  if (!Number.isInteger(guests) || guests < 1 || guests > 40) throw new HttpError(400, 'Guests must be a whole number from 1 to 40');
+  return { checkIn, checkOut, guests, nights, excludeId: url.searchParams.get('exclude') || undefined };
+}
+
 async function handleApi(req, res, url, store) {
   let parts;
   try {
@@ -369,24 +443,32 @@ async function handleApi(req, res, url, store) {
   }
   const { method } = req;
   const { data } = store;
+  const today = todayFrom(url);
   if (method !== 'GET') assertSameOrigin(req);
 
   if (parts[0] === 'dashboard' && parts.length === 1) {
     if (method !== 'GET') throw new HttpError(405, 'Method not allowed');
-    return sendJson(res, 200, buildView(data).dashboard());
+    return sendJson(res, 200, buildView(data, today).dashboard());
   }
 
-  const [collection, id] = parts;
-  if (!COLLECTIONS.includes(collection) || parts.length > 2) throw new HttpError(404, 'Not found');
-  const present = (record) => buildView(data).decorate(collection, record);
+  if (parts[0] === 'availability' && parts.length === 1) {
+    if (method !== 'GET') throw new HttpError(405, 'Method not allowed');
+    const query = parseAvailabilityQuery(url);
+    return sendJson(res, 200, { nights: query.nights, rooms: availableRooms(data, query) });
+  }
+
+  const [collection, id, action] = parts;
+  if (!COLLECTIONS.includes(collection) || parts.length > 3) throw new HttpError(404, 'Not found');
+  const present = (record) => buildView(data, today).decorate(collection, record);
 
   if (id === undefined) {
     if (method === 'GET') {
-      const view = buildView(data);
+      const view = buildView(data, today);
       return sendJson(res, 200, data[collection].map((r) => view.decorate(collection, r)));
     }
     if (method === 'POST') {
-      const record = await saveRecord(store, collection, await readJson(req), null);
+      const body = await readJson(req);
+      const record = collection === 'bookings' ? await createBooking(store, body) : await saveRecord(store, collection, body, null);
       return sendJson(res, 201, present(record));
     }
     throw new HttpError(405, 'Method not allowed');
@@ -394,6 +476,12 @@ async function handleApi(req, res, url, store) {
 
   const record = data[collection].find((r) => r.id === id);
   if (!record) throw new HttpError(404, 'Record not found');
+
+  if (action !== undefined) {
+    if (collection !== 'bookings' || action !== 'status') throw new HttpError(404, 'Not found');
+    if (method !== 'POST') throw new HttpError(405, 'Method not allowed');
+    return sendJson(res, 200, present(await changeBookingStatus(store, record, await readJson(req))));
+  }
 
   if (method === 'GET') return sendJson(res, 200, present(record));
   if (method === 'PUT') return sendJson(res, 200, present(await saveRecord(store, collection, await readJson(req), record)));
@@ -539,7 +627,7 @@ if (require.main === module) {
       process.exit(1);
     });
     server.listen(port, host, () => {
-      console.log(`PMS running at http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
+      console.log(`Hotel PMS running at http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
       console.log(`Storing data in ${storage.description}`);
     });
   })();
