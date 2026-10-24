@@ -17,6 +17,7 @@ const {
   saveRecord,
   changeStatus,
   buildView,
+  fingerprint,
 } = require('./hotel');
 
 const MAX_GUEST_STAY_NIGHTS = 30;
@@ -200,6 +201,22 @@ const inquiryForGuest = (i) => ({
   createdAt: i.createdAt,
 });
 
+// The guest's browser polls this to hear what the hotel did without a reload: a fingerprint of the guest's own
+// records (and the payments on their bookings), and the status of each, so the page can say what changed.
+function pulseForGuest(mine, data) {
+  const bookings = mine('bookings');
+  const serviceOrders = mine('serviceOrders');
+  const inquiries = mine('inquiries');
+  const stays = new Set(bookings.map((b) => b.id));
+  const statuses = (records) => Object.fromEntries(records.map((r) => [r.id, r.status]));
+  return {
+    version: fingerprint(bookings, serviceOrders, inquiries, data.payments.filter((p) => stays.has(p.bookingId))),
+    bookings: statuses(bookings),
+    serviceOrders: statuses(serviceOrders),
+    inquiries: statuses(inquiries),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Routing
 // ---------------------------------------------------------------------------
@@ -225,6 +242,10 @@ async function handlePortal(req, res, url, store, user) {
   };
 
   switch (resource) {
+    case 'pulse':
+      only('GET');
+      return sendJson(res, 200, pulseForGuest(mine, data));
+
     case 'rooms':
       only('GET');
       return sendJson(res, 200, { rooms: roomGroups(data, parseStay(url, today)) });

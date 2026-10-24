@@ -24,6 +24,7 @@ const {
   replyToInquiry,
   availableRooms,
   buildView,
+  managementPulse,
   localDate,
 } = hotel;
 
@@ -70,6 +71,11 @@ async function handleApi(req, res, url, store) {
   if (parts[0] === 'dashboard' && parts.length === 1) {
     if (method !== 'GET') throw new HttpError(405, 'Method not allowed');
     return sendJson(res, 200, buildView(data, today).dashboard());
+  }
+
+  if (parts[0] === 'pulse' && parts.length === 1) {
+    if (method !== 'GET') throw new HttpError(405, 'Method not allowed');
+    return sendJson(res, 200, managementPulse(data));
   }
 
   if (parts[0] === 'availability' && parts.length === 1) {

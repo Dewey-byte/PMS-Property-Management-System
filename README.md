@@ -57,7 +57,7 @@ A reservation from a guest starts as **Pending**. It already holds the room, so 
 | **Service requests** | What guests asked for. Confirm, decline, mark done. A confirmed or finished service linked to a stay is **added to that stay's bill**. |
 | **Services** | The catalogue of services, with price, and whether it is currently offered to guests. |
 
-The numbers beside Bookings, Inquiries and Service requests in the menu show how many are waiting.
+The numbers beside Bookings, Inquiries and Service requests in the menu show how many are waiting. They, and the page you are on, update by themselves: every 10 seconds the page checks whether anything changed, and a note appears when a guest sends something new. Guests are told the same way when the hotel confirms a reservation, answers a question or declines a request. Nothing needs reloading.
 
 **Making a booking yourself:** pick check-in and check-out, and the number of adults and children. The form lists only the rooms that are free for those nights and big enough for the party, fills in the room's rate, and shows the total. Choose an existing guest or add a new one on the spot.
 
@@ -157,7 +157,8 @@ The API is REST-style under `/api`.
   - `POST /api/inquiries/<id>/reply` with `{ "reply": "…" }` answers a guest.
   - `POST /api/bookings` may include `newGuest: { name, email, phone }` instead of `guestId`; the guest and booking are saved together.
   - `GET /api/dashboard`. Reads accept `?today=YYYY-MM-DD`.
-- **Guest accounts only** (`/api/portal/...`): `rooms` (with optional dates), `services`, `bookings` (+ `/<id>/cancel`), `service-orders` (+ `/<id>/cancel`), `inquiries`.
+  - `GET /api/pulse` is what the page polls: a `version` string that changes whenever any record is added, edited or removed, and the `requests` waiting for an answer.
+- **Guest accounts only** (`/api/portal/...`): `rooms` (with optional dates), `services`, `bookings` (+ `/<id>/cancel`), `service-orders` (+ `/<id>/cancel`), `inquiries`, and `pulse` (a `version` for the guest's own records, plus the status of each, so the page can say what the hotel did).
 - **Public:** `GET /api/auth/status` and `POST /api/auth/setup`, `/register`, `/login`, `/logout`.
 
 ## Limitations

@@ -516,18 +516,28 @@ function buildView(data, today) {
       arrivals,
       departures,
       forecast,
-      // What the management still has to answer.
-      requests: {
-        bookings: pending.length,
-        inquiries: data.inquiries.filter((i) => i.status === 'Open').length,
-        serviceOrders: data.serviceOrders.filter((o) => o.status === 'Requested').length,
-      },
+      requests: waitingOnHotel(data),
       pendingBookings: pending.map(bookingView).sort((a, b) => a.checkIn.localeCompare(b.checkIn)).slice(0, 8),
     };
   }
 
   return { decorate: (collection, record) => decorators[collection](record), dashboard, bookingView };
 }
+
+// What the management still has to answer.
+const waitingOnHotel = (data) => ({
+  bookings: data.bookings.filter((b) => b.status === 'Pending').length,
+  inquiries: data.inquiries.filter((i) => i.status === 'Open').length,
+  serviceOrders: data.serviceOrders.filter((o) => o.status === 'Requested').length,
+});
+
+// A short string that changes whenever a record in these lists is added, edited or removed. Browsers compare it
+// between polls to learn that something happened, without downloading the records themselves.
+const fingerprint = (...lists) =>
+  lists.map((records) => `${records.length}:${records.reduce((latest, r) => (r.updatedAt > latest ? r.updatedAt : latest), '')}`).join('|');
+
+// The management's browser polls this to see new requests without a reload: a fingerprint of everything, and what is waiting.
+const managementPulse = (data) => ({ version: fingerprint(...COLLECTIONS.map((c) => data[c])), requests: waitingOnHotel(data) });
 
 module.exports = {
   COLLECTIONS,
@@ -553,4 +563,6 @@ module.exports = {
   replyToInquiry,
   availableRooms,
   buildView,
+  fingerprint,
+  managementPulse,
 };

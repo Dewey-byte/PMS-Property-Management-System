@@ -315,6 +315,51 @@ test('a guest account is never linked to a guest the hotel already knows, even w
   });
 });
 
+test('a guest\'s pulse follows only their own records, so the page can say what the hotel did', async () => {
+  await withHotel(async ({ manager, guest, room }) => {
+    const apart = () => new Promise((resolve) => setTimeout(resolve, 5)); // records are stamped to the millisecond
+    const r = await room('101');
+    const spa = (await manager('POST', '/api/services', { name: 'Spa', price: 80 })).body;
+    const gina = await guest('gina');
+    const hugo = await guest('hugo');
+    const pulse = async (who) => (await who('GET', '/api/portal/pulse')).body;
+
+    const empty = await pulse(gina);
+    assert.deepEqual([empty.bookings, empty.serviceOrders, empty.inquiries], [{}, {}, {}]);
+
+    await apart();
+    const booking = (await gina('POST', '/api/portal/bookings', stay(r.id))).body;
+    const order = (await gina('POST', '/api/portal/service-orders', { serviceId: spa.id, date: day(11), quantity: 1, bookingId: booking.id })).body;
+    const question = (await gina('POST', '/api/portal/inquiries', { subject: 'Late arrival', message: 'Is that fine?' })).body;
+    const hugoBefore = await pulse(hugo);
+    const waiting = await pulse(gina);
+    assert.notEqual(waiting.version, empty.version);
+    assert.deepEqual(waiting.bookings, { [booking.id]: 'Pending' });
+    assert.deepEqual(waiting.serviceOrders, { [order.id]: 'Requested' });
+    assert.deepEqual(waiting.inquiries, { [question.id]: 'Open' });
+
+    // The hotel answers; the guest's reading shows each new status.
+    await apart();
+    await manager('POST', `/api/bookings/${booking.id}/status`, { status: 'Confirmed' });
+    await manager('POST', `/api/serviceOrders/${order.id}/status`, { status: 'Declined' });
+    await manager('POST', `/api/inquiries/${question.id}/reply`, { reply: 'Yes, any time.' });
+    const answered = await pulse(gina);
+    assert.notEqual(answered.version, waiting.version);
+    assert.deepEqual(answered.bookings, { [booking.id]: 'Confirmed' });
+    assert.deepEqual(answered.serviceOrders, { [order.id]: 'Declined' });
+    assert.deepEqual(answered.inquiries, { [question.id]: 'Answered' });
+
+    // A payment on their booking is something to show them too.
+    await apart();
+    const paid = await manager('POST', '/api/payments', { bookingId: booking.id, date: day(1), amount: 50 });
+    assert.equal(paid.status, 201);
+    assert.notEqual((await pulse(gina)).version, answered.version);
+
+    // None of it is visible to another guest.
+    assert.deepEqual(await pulse(hugo), hugoBefore);
+  });
+});
+
 test('pending reservations are flagged for the management and can be confirmed or declined', async () => {
   await withHotel(async ({ manager, guest, room }) => {
     const r = await room('101');

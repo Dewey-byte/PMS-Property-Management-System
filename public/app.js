@@ -97,17 +97,29 @@ async function api(method, url, body) {
   if (method === 'GET' && url.startsWith('/api/') && !url.startsWith('/api/auth/')) {
     url += `${url.includes('?') ? '&' : '?'}today=${today()}`;
   }
-  const res = await fetch(url, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  // The live updates (see below) must not announce this person's own changes back to them.
+  const writes = method !== 'GET' && !url.startsWith('/api/auth/');
+  if (writes) live.writing++;
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } finally {
+    if (writes) {
+      live.writing--;
+      live.wrote++;
+    }
+  }
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
     // A 401 from a data endpoint means the session is gone; the sign-in endpoints report their own errors.
     if (res.status === 401 && !url.startsWith('/api/auth/')) endSession('Your session has expired. Please sign in again.');
     throw Object.assign(new Error(data?.error || `Request failed (${res.status})`), { status: res.status });
   }
+  if (writes) pollLive(true);
   return data;
 }
 
@@ -722,11 +734,11 @@ document.addEventListener('pointermove', (e) => {
 });
 
 let toastTimer;
-function toast(message, isError = false) {
+function toast(message, isError = false, ms = 3500) {
   toastEl.textContent = message;
   toastEl.className = `toast show${isError ? ' error' : ''}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 3500);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), ms);
 }
 
 // ---------------------------------------------------------------------------
@@ -865,12 +877,14 @@ async function enterApp(user) {
   shownName = null;
   const home = isGuest() ? '#/stay' : '#/dashboard';
   if (!location.hash) history.replaceState(null, '', home);
+  startLive();
   await route();
 }
 
 function endSession(notice = '') {
   if (!currentUser) return;
   currentUser = null;
+  stopLive();
   if (dialog.open) dialog.close();
   showAuth('login', notice);
 }
@@ -1553,6 +1567,121 @@ dialog.addEventListener('cancel', (e) => {
 });
 dialog.addEventListener('click', (e) => {
   if (e.target === dialog) closeDialog();
+});
+
+// ---------------------------------------------------------------------------
+// Live updates: every few seconds the page asks the server whether anything changed, so new requests and replies
+// appear (with a note on screen) without a reload. Changes made on this page are never announced back to the person
+// who made them.
+// ---------------------------------------------------------------------------
+
+const LIVE_EVERY_MS = 10_000;
+const NOTICE_MS = 6000;
+
+const live = {
+  timer: 0,
+  run: null, // identifies the current timer loop
+  seen: null, // the last reading from the server
+  stale: false, // the server has changed since the page last loaded its data
+  queue: Promise.resolve(), // readings run one after another
+  writing: 0, // changes of our own on their way to the server
+  wrote: 0, // changes of our own that have finished
+};
+
+const NEW_REQUEST = {
+  bookings: ['reservation request', 'reservation requests'],
+  inquiries: ['guest question', 'guest questions'],
+  serviceOrders: ['service request', 'service requests'],
+};
+
+const GUEST_NEWS = {
+  bookings: { Confirmed: 'Your reservation is confirmed', Cancelled: 'Your reservation was cancelled by the hotel' },
+  serviceOrders: { Confirmed: 'Your service request is confirmed', Declined: 'Your service request was declined', Cancelled: 'Your service request was cancelled by the hotel' },
+  inquiries: { Answered: 'The hotel replied to your question' },
+};
+
+// What arrived for the management since the last reading.
+function managerNews(before, now) {
+  return Object.entries(NEW_REQUEST)
+    .map(([kind, [one, many]]) => {
+      const added = now.requests[kind] - before.requests[kind];
+      return added > 0 ? `${added === 1 ? 'New' : `${added} new`} ${added === 1 ? one : many}` : '';
+    })
+    .filter(Boolean)
+    .join(' · ');
+}
+
+// What the hotel did to a guest's reservations, requests and questions since the last reading.
+function guestNews(before, now) {
+  const news = new Set();
+  for (const [kind, lines] of Object.entries(GUEST_NEWS)) {
+    for (const [id, status] of Object.entries(now[kind])) {
+      const was = before[kind][id];
+      if (was !== undefined && was !== status && lines[status]) news.add(lines[status]);
+    }
+  }
+  return [...news].join(' · ');
+}
+
+// `quiet` takes a reading without announcing anything: right after this person's own change, so it isn't news to them.
+function pollLive(quiet = false) {
+  live.queue = live.queue.then(() => readLive(quiet)).catch(() => {});
+  return live.queue;
+}
+
+async function readLive(quiet) {
+  const user = currentUser;
+  if (!user) return;
+  // A reading that overlapped a change of our own would report that change as news.
+  const wrote = live.wrote;
+  const writingAtStart = live.writing > 0;
+  try {
+    const pulse = await api('GET', isGuest() ? '/api/portal/pulse' : '/api/pulse');
+    if (currentUser !== user) return; // signed out (or in as someone else) while waiting
+    const before = live.seen;
+    live.seen = pulse;
+    if (!before || quiet || writingAtStart || live.writing > 0 || live.wrote !== wrote) return;
+
+    const news = isGuest() ? guestNews(before, pulse) : managerNews(before, pulse);
+    if (news) toast(news, false, NOTICE_MS);
+    if (pulse.version !== before.version) live.stale = true;
+  } catch {
+    return; // offline or a hiccup: the next reading will try again
+  }
+  await refreshLive();
+}
+
+// Loads the current page again, quietly (no skeleton, no entrance animation), once the server has changed.
+async function refreshLive() {
+  if (!live.stale || dialog.open) return; // a form is open: try again at the next reading
+  live.stale = false;
+  // The search form on "Book a stay" would lose what was typed in it, and nothing on it depends on the guest's own records.
+  if (isGuest() && (!location.hash || location.hash === '#/stay')) return;
+  await route();
+}
+
+function startLive() {
+  stopLive();
+  pollLive(); // the first reading is only the starting point
+  const run = (live.run = Symbol()); // a tick left over from an earlier sign-in must not start a second timer
+  const tick = () => {
+    live.timer = setTimeout(async () => {
+      if (live.run !== run) return;
+      if (!document.hidden) await pollLive(); // a hidden tab waits until it is shown again
+      if (live.run === run) tick();
+    }, LIVE_EVERY_MS);
+  };
+  tick();
+}
+
+function stopLive() {
+  clearTimeout(live.timer);
+  Object.assign(live, { timer: 0, run: null, seen: null, stale: false });
+}
+
+// Coming back to the tab: catch up now instead of waiting for the next tick.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && currentUser) pollLive();
 });
 
 window.addEventListener('hashchange', route);

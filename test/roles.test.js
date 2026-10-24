@@ -90,19 +90,24 @@ test('each kind of account reaches only its own part of the API', async () => {
     // Management
     assert.equal(await status('/api/rooms', manager), 200);
     assert.equal(await status('/api/dashboard', manager), 200);
+    assert.equal(await status('/api/pulse', manager), 200);
     assert.equal(await status('/api/portal/rooms', manager), 403);
     assert.equal(await status('/api/portal/bookings', manager), 403);
+    assert.equal(await status('/api/portal/pulse', manager), 403);
 
     // Guest
     assert.equal(await status('/api/portal/rooms', guest), 200);
     assert.equal(await status('/api/portal/bookings', guest), 200);
-    for (const url of ['/api/rooms', '/api/guests', '/api/bookings', '/api/payments', '/api/dashboard', '/api/services', '/api/inquiries', '/api/availability?checkIn=2030-01-01&checkOut=2030-01-02']) {
+    assert.equal(await status('/api/portal/pulse', guest), 200);
+    for (const url of ['/api/rooms', '/api/guests', '/api/bookings', '/api/payments', '/api/dashboard', '/api/pulse', '/api/services', '/api/inquiries', '/api/availability?checkIn=2030-01-01&checkOut=2030-01-02']) {
       assert.equal(await status(url, guest), 403, url);
     }
 
     // Nobody signed in
     assert.equal(await status('/api/portal/rooms'), 401);
+    assert.equal(await status('/api/portal/pulse'), 401);
     assert.equal(await status('/api/rooms'), 401);
+    assert.equal(await status('/api/pulse'), 401);
   });
 });
 

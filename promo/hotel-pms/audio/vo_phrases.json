@@ -1,0 +1,66 @@
+[
+ {
+  "id": "v1",
+  "text": "Meet Hotel P M S. The simple way to run your hotel, and delight every guest.",
+  "beat": 1,
+  "start": 0.654,
+  "end": 6.614,
+  "length": 5.96
+ },
+ {
+  "id": "v2",
+  "text": "Start each day with a clear picture: occupancy, arrivals, departures, and everything waiting for a reply.",
+  "beat": 11,
+  "start": 7.175,
+  "end": 14.384,
+  "length": 7.208
+ },
+ {
+  "id": "v3",
+  "text": "See every room on one calendar. Pick the dates, and only the rooms that are truly free appear, priced in pesos.",
+  "beat": 24,
+  "start": 15.654,
+  "end": 23.617,
+  "length": 7.963
+ },
+ {
+  "id": "v4",
+  "text": "Your guests get their own app, right on their phone. They sign up in a moment.",
+  "beat": 37,
+  "start": 24.132,
+  "end": 29.651,
+  "length": 5.52
+ },
+ {
+  "id": "v5",
+  "text": "They pick their dates, see what's available, and reserve. Every request waits for your approval.",
+  "beat": 47,
+  "start": 30.654,
+  "end": 37.15,
+  "length": 6.497
+ },
+ {
+  "id": "v6",
+  "text": "They can order extras, like airport pickup or breakfast, and ask you anything.",
+  "beat": 58,
+  "start": 37.827,
+  "end": 42.671,
+  "length": 4.843
+ },
+ {
+  "id": "v7",
+  "text": "You confirm the booking, reply, and approve the service. The guest sees it instantly, and extras join their bill.",
+  "beat": 67,
+  "start": 43.697,
+  "end": 51.644,
+  "length": 7.947
+ },
+ {
+  "id": "v8",
+  "text": "Hotel P M S. One system for your hotel. One app for your guests.",
+  "beat": 81,
+  "start": 52.828,
+  "end": 59.105,
+  "length": 6.277
+ }
+]

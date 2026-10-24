@@ -332,6 +332,44 @@ test('a pending booking holds its room until it is confirmed or declined', async
   });
 });
 
+test('the pulse tells a polling browser that something was added, edited or removed, and what is waiting', async () => {
+  await withApp(async ({ call, room, guest, book }) => {
+    const apart = () => new Promise((resolve) => setTimeout(resolve, 5)); // records are stamped to the millisecond
+    const pulse = async () => (await call('GET', '/api/pulse')).body;
+
+    const start = await pulse();
+    assert.deepEqual(start.requests, { bookings: 0, inquiries: 0, serviceOrders: 0 });
+    assert.equal((await pulse()).version, start.version); // nothing happened, so nothing changed
+
+    await apart();
+    const r = await room('1001');
+    const afterAdd = await pulse();
+    assert.notEqual(afterAdd.version, start.version);
+
+    await apart();
+    await call('PUT', `/api/rooms/${r.id}`, { ...r, rate: 150 });
+    const afterEdit = await pulse();
+    assert.notEqual(afterEdit.version, afterAdd.version);
+
+    await apart();
+    const sam = await guest('Sam');
+    const pat = await guest('Pat');
+    const afterGuests = await pulse();
+    assert.notEqual(afterGuests.version, afterEdit.version);
+
+    // Removing the older guest leaves the newest record alone; the number of records is what gives it away.
+    await call('DELETE', `/api/guests/${sam.id}`);
+    assert.notEqual((await pulse()).version, afterGuests.version);
+
+    // What is waiting on the hotel, as the dashboard counts it.
+    const waiting = (await book(r.id, pat.id, day(10), day(12), { status: 'Pending' })).body;
+    assert.deepEqual((await pulse()).requests, { bookings: 1, inquiries: 0, serviceOrders: 0 });
+    await call('POST', `/api/bookings/${waiting.id}/status`, { status: 'Confirmed' });
+    assert.deepEqual((await pulse()).requests, { bookings: 0, inquiries: 0, serviceOrders: 0 });
+    assert.deepEqual((await pulse()).requests, (await call('GET', '/api/dashboard')).body.requests);
+  });
+});
+
 test('services, service requests and inquiries are managed like the rest', async () => {
   await withApp(async ({ call, room, guest, book }) => {
     const g = await guest('Service Guest');
