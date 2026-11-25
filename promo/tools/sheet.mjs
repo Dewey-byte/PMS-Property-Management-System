@@ -4,7 +4,8 @@ import { spawnSync } from 'node:child_process';
 
 const [out, height, perRow, ...names] = process.argv.slice(2);
 const per = Number(perRow);
-const inputs = names.flatMap((n) => ['-i', `hotel-pms/assets/shots/${n}.png`]);
+// a name with a slash is a path (e.g. out/hotel-pms/stills/...), anything else is a capture
+const inputs = names.flatMap((n) => ['-i', n.includes('/') ? n : `hotel-pms/assets/shots/${n}.png`]);
 const scale = names.map((_, i) => `[${i}:v]scale=-1:${height}[a${i}]`);
 const rows = [];
 for (let r = 0; r < names.length; r += per) {

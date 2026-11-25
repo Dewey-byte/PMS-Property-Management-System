@@ -2,9 +2,9 @@
  {
   "id": "v1",
   "text": "Meet Hotel P M S. The simple way to run your hotel, and delight every guest.",
-  "beat": 1,
-  "start": 0.654,
-  "end": 6.614,
+  "beat": 0.5,
+  "start": 0.327,
+  "end": 6.288,
   "length": 5.96
  },
  {
@@ -59,7 +59,7 @@
   "id": "v8",
   "text": "Hotel P M S. One system for your hotel. One app for your guests.",
   "beat": 81,
-  "start": 52.828,
+  "start": 52.827,
   "end": 59.105,
   "length": 6.277
  }

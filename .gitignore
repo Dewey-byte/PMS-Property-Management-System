@@ -3,3 +3,6 @@ data/
 *.tmp
 promo/out/
 .DS_Store
+promo/hotel-pms/audio/_tmp/
+promo/hotel-pms/audio/mix.wav
+promo/hotel-pms/audio/sfx.wav

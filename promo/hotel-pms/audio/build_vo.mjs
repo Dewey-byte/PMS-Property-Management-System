@@ -17,7 +17,8 @@ const script = JSON.parse(readFileSync(path.join(HERE, 'script.json'), 'utf8'));
 const DURATION = JSON.parse(readFileSync(path.join(FILM, 'film.json'), 'utf8')).duration;
 
 // beat number each line begins on (see docs/shotlist.md)
-const ONSET_BEAT = { v1: 1, v2: 11, v3: 24, v4: 37, v5: 47, v6: 58, v7: 67, v8: 81 };
+// (v1 starts half a beat in so the film's first word, "Meet", is spoken as it lands)
+const ONSET_BEAT = { v1: 0.5, v2: 11, v3: 24, v4: 37, v5: 47, v6: 58, v7: 67, v8: 81 };
 
 const run = (cmd, args) => {
   const r = spawnSync(cmd, args, { encoding: 'utf8' });
@@ -42,7 +43,7 @@ for (const line of script) {
   run('ffmpeg', ['-v', 'error', '-y', '-i', path.join(HERE, 'vo', `${line.id}.mp3`), '-af', chain, '-ac', '1', '-ar', '48000', out]);
   const len = Number(run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', out]).trim());
   const beat = ONSET_BEAT[line.id];
-  const start = grid.beats[beat];
+  const start = grid.offset + beat * grid.period;
   placed.push({ id: line.id, text: line.text, beat, start: +start.toFixed(3), end: +(start + len).toFixed(3), length: +len.toFixed(3), file: out });
 }
 
